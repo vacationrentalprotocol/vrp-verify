@@ -1,0 +1,53 @@
+{
+  "name": "@vacationrentalprotocol/vrp-verify",
+  "version": "0.1.0",
+  "description": "Zero-dependency reference verifier for VRP (Vacation Rental Protocol) signed verified-stay offers: pure Ed25519 (EdDSA) verification of a host-domain signed offer against the host's own JWKS.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Vacation Rental Protocol maintainers <hello@vacationrentalprotocol.com>",
+  "homepage": "https://vacationrentalprotocol.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vacationrentalprotocol/vrp-verify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vacationrentalprotocol/vrp-spec/issues"
+  },
+  "keywords": [
+    "vrp",
+    "vacation-rental-protocol",
+    "ed25519",
+    "eddsa",
+    "jws",
+    "jwks",
+    "verifier",
+    "zero-dependency",
+    "signed-offer"
+  ],
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "src/",
+    "NOTICE",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
