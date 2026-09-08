@@ -1,6 +1,6 @@
 {
   "name": "@vacationrentalprotocol/vrp-verify",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency reference verifier for VRP (Vacation Rental Protocol) signed verified-stay offers: pure Ed25519 (EdDSA) verification of a host-domain signed offer against the host's own JWKS.",
   "type": "module",
   "license": "Apache-2.0",
