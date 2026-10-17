@@ -28,7 +28,9 @@ for (const [file, expected] of Object.entries(EXPECT)) {
     const v = load(file);
     const r = verifyOffer({ envelope: v.input, jwks: v.jwks, now: v.clock });
     assert.equal(r.status, expected, `${r.status} (${r.code}): ${r.reason}`);
-    assert.equal(safeToQuote(r), expected === Status.VERIFIED);
+    const context = { fetchedDomain: "example-host.invalid", lists: { icannRules: [], specification13Tlds: [] } };
+    assert.equal(safeToQuote(r, context), expected === Status.VERIFIED);
+    assert.equal(safeToQuote(r), false, "without the fetched domain and the lists the gate fails closed");
   });
 }
 

@@ -6,17 +6,20 @@ A tiny, **zero-dependency** verifier for [VRP](https://vacationrentalprotocol.co
 It answers one question for an AI agent or client: **may I quote this offer as an
 official, direct offer from the host?** It verifies an Ed25519 (EdDSA) signature
 over the offer against the **host domain's own JWKS** — the host is the root of
-trust — and then evaluates the offline-checkable Safe-to-Quote conditions of the
-VRP specification (§7 and §4). There is no central registry, and this package
-never contacts one.
+trust — and then evaluates the Safe-to-Quote conditions of the VRP
+specification (§7), including the host-owned domain rule (§2) and the binding of
+the offer to the domain it was fetched from. There is no central registry, and
+this package never contacts one.
 
 - **Zero runtime dependencies.** Node standard library (`node:crypto`) only.
-- **No network, no canonicalization.** You supply the JWKS; the signature is
-  checked over the exact bytes as sent. The evaluation instant is injectable
+- **No network, no canonicalization.** You supply the JWKS, the domain you
+  fetched from and the two public lists; the signature is checked over the
+  exact bytes as sent. The evaluation instant is injectable
   (`now`) and defaults to the system clock; the crypto layer itself never
   consults a clock.
 - **Fail-closed.** Only a full pass is quoteable.
-- **Conformance-tested** against the public VRP offer vectors.
+- **Conformance-tested** against the public VRP offer vectors and host-domain
+  vectors.
 
 ## Install
 
@@ -29,50 +32,62 @@ Requires Node.js >= 18.
 ## Usage
 
 ```js
-import { verifyOffer, safeToQuote, quoteChecks } from "@vacationrentalprotocol/vrp-verify";
+import {
+  verifyOffer, safeToQuote, quoteChecks, discoveryChecks,
+  icannRulesFromPsl, specification13TldsFromGtlds,
+} from "@vacationrentalprotocol/vrp-verify";
 
-// `envelope` is a signed_verified_stay_offer (VRP spec §5).
-// `jwks` is the JSON at https://<host-domain>/.well-known/jwks.json
+// The two public lists (spec §2), fetched and cached by you:
+//   https://publicsuffix.org/list/public_suffix_list.dat
+//   https://www.icann.org/resources/registries/gtlds/v2/gtlds.json
+const lists = {
+  icannRules: icannRulesFromPsl(pslText),
+  specification13Tlds: specification13TldsFromGtlds(gtldsJson),
+};
+
+// `fetchedDomain` is the host of the URLs you requested; `discovery` is
+// https://<fetchedDomain>/.well-known/vacation-rental.json, and `jwks` and
+// `envelope` come from the jwks_url and offer endpoint it names.
+if (discoveryChecks(discovery, { fetchedDomain }).length > 0) throw new Error("not a VRP node");
 const result = verifyOffer({ envelope, jwks, now: new Date() });
 
-if (safeToQuote(result)) {
-  // Signature valid, offer fresh, availability true, price exact,
-  // booking URL pinned to the host domain, agent permission granted.
-  // Quote result.payload as an official direct offer.
+if (safeToQuote(result, { fetchedDomain, lists })) {
+  // Signature valid, offer fresh, the offer names the domain it came from,
+  // that domain is host-owned, availability true, price exact, booking URL a
+  // node URL, agent permission granted. Quote result.payload as an official
+  // direct offer.
 } else {
-  const { failures } = quoteChecks(result);
+  const { failures } = quoteChecks(result, { fetchedDomain, lists });
   console.warn(result.status, failures); // do NOT quote
 }
 ```
 
+Without `fetchedDomain` or `lists` the gate fails closed (`fetched_domain_unknown`,
+`host_owned_unknown`).
+
 ## What this package checks — and what it does not
 
-VRP spec **§7 (Safe-to-Quote Rules)** lists eleven conditions. This package
-checks the **eight that are decidable offline** from the signed offer and the
-JWKS you pass in:
+VRP spec **§7 (Safe-to-Quote Rules)**, with the host-owned domain rule of §2:
 
-| # | §7 condition | where |
-| - | ------------ | ----- |
-| 1 | JWKS contains an Ed25519 key matching the JWS | `verifyOffer` |
-| 2 | the compact JWS verifies against the host-domain JWKS | `verifyOffer` |
-| 3 | the signed payload matches the returned offer | `verifyOffer` |
-| 4 | `valid_until` is present and fresh | `verifyOffer` |
-| 5 | `availability.available` is true | `quoteChecks` |
-| 6 | `price.exact` is true | `quoteChecks` |
-| 7 | a direct booking URL is present — and, per **§4**, is an absolute `https` URL whose host is the offer's `canonical_domain` or a subdomain of it | `quoteChecks` |
-| 8 | `agent_permission.may_quote_as_official_direct_offer` is true | `quoteChecks` |
+| # | condition | where |
+| - | --------- | ----- |
+| 1 | the discovery document declares `protocol: "vacation-rental-protocol"` and `protocol_version: "0.1"`, its `canonical_domain` is the domain it was fetched from, and its `jwks_url` and `verified_stay_offer_endpoint` are node URLs | `discoveryChecks` |
+| 2 | the JWKS holds the key the JWS header's `kid` names (a header without `kid` names none) | `verifyOffer` |
+| 3 | the compact JWS verifies against the host-domain JWKS | `verifyOffer` |
+| 4 | the signed payload matches the returned offer | `verifyOffer` |
+| 5 | `valid_until` is present and fresh | `verifyOffer` |
+| 6 | the signed `canonical_domain` is the domain the offer was fetched from | `quoteChecks` |
+| 7 | that domain is host-owned (§2): its own registrable domain under the ICANN section of the Public Suffix List, rules compared in A-label form, not under a brand or closed top-level domain | `quoteChecks` |
+| 8 | `availability.available` is true | `quoteChecks` |
+| 9 | `price.exact` is true | `quoteChecks` |
+| 10 | a direct booking URL is present and is a node URL (§2, §5.1): `https`, host `canonical_domain` or `www.` + it, no userinfo, default port | `quoteChecks` |
+| 11 | `agent_permission.may_quote_as_official_direct_offer` is true | `quoteChecks` |
 
-**The remaining three §7 conditions are the caller's responsibility.** They
-concern the *discovery document* and require network context this package
-deliberately does not have:
-
-- the discovery document is fetched from the host-owned domain,
-- it declares `protocol: "vacation-rental-protocol"`,
-- it declares `protocol_version: "0.1"`.
-
-Likewise, **fetching the JWKS itself** (over HTTPS, from the host's own domain,
-with your own caching and rotation policy) is yours: this package verifies
-against whatever JWKS document you hand it.
+**Fetching is yours.** This package has no network access: you fetch the
+discovery document, the JWKS and the offer over HTTPS from the node's domain,
+with your own caching and rotation policy, and you follow a redirect only when
+`checkRedirects()` accepts its target. You also fetch and cache the two public
+lists.
 
 ### Result
 
@@ -103,11 +118,16 @@ The four statuses:
   reported as `invalid`, because absence of a key is not proof of forgery.
 
 `status: "verified"` alone is **not** permission to quote — it is the crypto
-verdict. `safeToQuote()` / `quoteChecks()` layer the §7/§4 policy conditions on
+verdict. `safeToQuote()` / `quoteChecks()` layer the §7 policy conditions on
 top; `quoteChecks()` names each failed condition
-(`availability_not_true`, `price_not_exact`, `booking_url_missing`,
-`booking_url_invalid`, `booking_url_host_mismatch`,
+(`fetched_domain_unknown`, `offer_domain_mismatch`, `host_owned_unknown`,
+`not_host_owned`, `availability_not_true`, `price_not_exact`,
+`booking_url_missing`, `booking_url_invalid`, `booking_url_host_mismatch`,
 `quote_permission_not_granted`, or `not_verified`).
+
+The domain checks are also exported on their own: `checkHostOwned`,
+`checkNodeUrl`, `checkRedirects`, `discoveryChecks`, `registrableDomain`,
+`CLOSED_TLDS`, `icannRulesFromPsl`, `specification13TldsFromGtlds`.
 
 ### Low-level
 
@@ -131,15 +151,19 @@ policy). Its `reason` codes match the published VRP conformance vectors.
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext
   `envelope.offer` is treated as tampering (`invalid`).
-- The **booking URL is host-pinned** (§4): a signed offer whose
-  `direct_booking_url` points off the host's `canonical_domain` fails the gate,
-  even though its signature is valid. The pin is deliberately **stricter than
-  §4's registrable-domain wording**: only the `canonical_domain` host itself
-  and its subdomains pass. Deriving the registrable domain of an arbitrary
-  `canonical_domain` would require a Public Suffix List (a dependency, and a
-  fail-open risk if approximated), so when `canonical_domain` is itself a
-  subdomain, sibling subdomains are rejected — the check can refuse a
-  spec-valid URL, never accept a third-party host.
+- The **key is the one the header names.** A JWS header without `kid`
+  selects no key, even when a key in the JWKS has no `kid` either.
+- The **offer is bound to the domain it was fetched from** (§7): a valid
+  signature over an offer that names another domain fails the gate.
+- **Only a host-owned domain is a node** (§2): a name a platform hands out
+  under its own domain (the Public Suffix List's PRIVATE section does not
+  count), or a name under a brand or closed top-level domain (`.amazon`,
+  `.booking`, `.hotels`, …), fails the gate. Without the two lists the result
+  is unknown and the gate fails closed.
+- The **booking URL is a node URL** (§5.1): `https` on `canonical_domain` or
+  `www.` + it, with no userinfo and no port other than the default. Another
+  name under the node's domain fails the gate, even though the signature is
+  valid.
 
 Report vulnerabilities per the VRP security policy (see the vrp-spec
 repository). Do not open public issues for security reports.
@@ -151,8 +175,11 @@ the npm tarball) runs this verifier against byte-identical copies of the VRP
 signed-offer conformance vectors and asserts that its outcome matches each
 vector's declared `expected` block on the three fields the vectors define
 (`verified` / `reason` / `fresh`) — the same three-field contract the vrp-spec
-reference runner checks. The typed statuses and the quote gate are additional
-API surface on top of that contract, covered by their own tests.
+reference runner checks. It also runs the domain checks against a copy of the
+VRP host-domain vectors (`examples/conformance/host-domain/vectors.v0.1.json`,
+53 cases) and asserts the reason each one expects. The typed statuses and the
+quote gate are additional API surface on top of that contract, covered by
+their own tests.
 
 ## Implement your own
 

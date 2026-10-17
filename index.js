@@ -8,4 +8,14 @@
 export { verifyCompactJws } from "./src/jws.js";
 export { verifyOffer } from "./src/offer.js";
 export { safeToQuote, quoteChecks, QuoteFailure } from "./src/quote.js";
+export {
+  CLOSED_TLDS,
+  checkHostOwned,
+  checkNodeUrl,
+  checkRedirects,
+  discoveryChecks,
+  icannRulesFromPsl,
+  registrableDomain,
+  specification13TldsFromGtlds,
+} from "./src/domain.js";
 export { Status, Reason } from "./src/status.js";
