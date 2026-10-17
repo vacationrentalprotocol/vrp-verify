@@ -29,6 +29,12 @@ npm install @vacationrentalprotocol/vrp-verify
 
 Requires Node.js >= 18.
 
+**Upgrading from 0.1.x.** 0.2.0 changes what passes the gate: `safeToQuote()`
+and `quoteChecks()` now need the domain you fetched from and the two public
+lists, and without them they fail closed. A dependency range such as `^0.1.1`
+does not pick up 0.2.0 (under semantic versioning a caret range below 1.0 stays
+within its minor version); change the range to `^0.2.0` and pass the context.
+
 ## Usage
 
 ```js
