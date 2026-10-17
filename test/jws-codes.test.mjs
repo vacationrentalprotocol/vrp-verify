@@ -52,6 +52,16 @@ test("malformed_payload: valid signature over a non-JSON payload", () => {
   assert.equal(r.reason, Reason.MALFORMED_PAYLOAD);
 });
 
+test("kid_not_in_jwks: a header without kid selects no key, even a key without kid", () => {
+  const [, p] = goodJws.split(".");
+  const noKid = signRawSegments(b64url(JSON.stringify({ alg: "EdDSA", typ: "JWT" })), p);
+  const keyWithoutKid = (({ kid, ...rest }) => rest)(jwks.keys[0]);
+  assert.equal(reasonOf(noKid), Reason.KID_NOT_IN_JWKS);
+  assert.equal(reasonOf(noKid, { keys: [keyWithoutKid] }), Reason.KID_NOT_IN_JWKS);
+  const emptyKid = signRawSegments(b64url(JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: "" })), p);
+  assert.equal(reasonOf(emptyKid, { keys: [{ ...keyWithoutKid, kid: "" }] }), Reason.KID_NOT_IN_JWKS);
+});
+
 test("shapeless JWKS documents degrade to kid_not_in_jwks, never a throw", () => {
   for (const doc of [null, undefined, {}, { keys: "nope" }, { keys: [null] }]) {
     // call directly — reasonOf's default parameter would swallow `undefined`

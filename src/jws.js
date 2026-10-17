@@ -51,6 +51,11 @@ export function verifyCompactJws(compactJws, jwksDoc) {
     return { valid: false, reason: Reason.UNEXPECTED_ALG, header };
   }
 
+  // §3.1: the key is the one whose kid the header names. A header without a
+  // kid names no key, even when a key in the JWKS has no kid either.
+  if (typeof header.kid !== "string" || header.kid.length === 0) {
+    return { valid: false, reason: Reason.KID_NOT_IN_JWKS, header };
+  }
   const keys = (jwksDoc && Array.isArray(jwksDoc.keys)) ? jwksDoc.keys : [];
   const jwk = keys.find((k) => k && k.kid === header.kid);
   if (!jwk) return { valid: false, reason: Reason.KID_NOT_IN_JWKS, header };
