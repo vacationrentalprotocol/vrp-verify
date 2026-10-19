@@ -10,7 +10,7 @@
 //   - `valid_until` is present and fresh                   (via verifyOffer)
 //   - `availability.available` is true
 //   - `price.exact` is true
-//   - a direct booking URL is present — and per §4 it MUST be an absolute
+//   - a direct booking URL is present — and per §5.1 it MUST be an absolute
 //     https URL whose host is the offer's `canonical_domain` or a subdomain
 //     of it; anything else is treated as unknown and fails the gate
 //   - `agent_permission.may_quote_as_official_direct_offer` is true
@@ -43,7 +43,7 @@ function normalizedHost(domain) {
   }
 }
 
-// §4: absolute https URL whose host is canonical_domain or a subdomain of it.
+// §5.1: absolute https URL whose host is canonical_domain or a subdomain of it.
 // Returns a QuoteFailure code, or null when the URL passes.
 function bookingUrlFailure(payload) {
   const url = payload?.booking?.direct_booking_url;
@@ -61,7 +61,7 @@ function bookingUrlFailure(payload) {
   const canonical = normalizedHost(payload?.canonical_domain);
   if (!canonical) return QuoteFailure.BOOKING_URL_HOST_MISMATCH; // cannot confirm -> unknown -> fail closed
   const host = parsed.hostname;
-  // Deliberately stricter than §4's registrable-domain wording: we accept the
+  // Deliberately stricter than §5.1's registrable-domain wording: we accept the
   // canonical_domain host itself or its children only. Deriving the registrable
   // domain of an arbitrary canonical_domain would require a Public Suffix List
   // (a dependency, and a fail-OPEN risk if approximated), so when
@@ -75,7 +75,7 @@ function bookingUrlFailure(payload) {
 }
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §4) against a
+ * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5.1) against a
  * `verifyOffer()` result.
  *
  * @param {import("./offer.js").OfferVerificationResult} verification
