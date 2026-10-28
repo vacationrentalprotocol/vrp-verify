@@ -7,7 +7,7 @@ It answers one question for an AI agent or client: **may I quote this offer as a
 official, direct offer from the host?** It verifies an Ed25519 (EdDSA) signature
 over the offer against the **host domain's own JWKS** — the host is the root of
 trust — and then evaluates the offline-checkable Safe-to-Quote conditions of the
-VRP specification (§7 and §4). There is no central registry, and this package
+VRP specification (§7 and §5.1). There is no central registry, and this package
 never contacts one.
 
 - **Zero runtime dependencies.** Node standard library (`node:crypto`) only.
@@ -59,7 +59,7 @@ JWKS you pass in:
 | 4 | `valid_until` is present and fresh | `verifyOffer` |
 | 5 | `availability.available` is true | `quoteChecks` |
 | 6 | `price.exact` is true | `quoteChecks` |
-| 7 | a direct booking URL is present — and, per **§4**, is an absolute `https` URL whose host is the offer's `canonical_domain` or a subdomain of it | `quoteChecks` |
+| 7 | a direct booking URL is present — and, per **§5.1**, is a node URL (§2): `https`, host the offer's `canonical_domain` or `www.` followed by it, no userinfo, the default port | `quoteChecks` |
 | 8 | `agent_permission.may_quote_as_official_direct_offer` is true | `quoteChecks` |
 
 **The remaining three §7 conditions are the caller's responsibility.** They
@@ -103,7 +103,7 @@ The four statuses:
   reported as `invalid`, because absence of a key is not proof of forgery.
 
 `status: "verified"` alone is **not** permission to quote — it is the crypto
-verdict. `safeToQuote()` / `quoteChecks()` layer the §7/§4 policy conditions on
+verdict. `safeToQuote()` / `quoteChecks()` layer the §7/§5.1 policy conditions on
 top; `quoteChecks()` names each failed condition
 (`availability_not_true`, `price_not_exact`, `booking_url_missing`,
 `booking_url_invalid`, `booking_url_host_mismatch`,
@@ -131,15 +131,11 @@ policy). Its `reason` codes match the published VRP conformance vectors.
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext
   `envelope.offer` is treated as tampering (`invalid`).
-- The **booking URL is host-pinned** (§4): a signed offer whose
-  `direct_booking_url` points off the host's `canonical_domain` fails the gate,
-  even though its signature is valid. The pin is deliberately **stricter than
-  §4's registrable-domain wording**: only the `canonical_domain` host itself
-  and its subdomains pass. Deriving the registrable domain of an arbitrary
-  `canonical_domain` would require a Public Suffix List (a dependency, and a
-  fail-open risk if approximated), so when `canonical_domain` is itself a
-  subdomain, sibling subdomains are rejected — the check can refuse a
-  spec-valid URL, never accept a third-party host.
+- The **booking URL is a node URL** (§5.1, §2): a signed offer whose
+  `direct_booking_url` is not on the offer's `canonical_domain` or `www.`
+  followed by it fails the gate, even though its signature is valid. Any other
+  name under the domain (`airbnb.example`) fails too: it may be served by
+  another party. So do userinfo and a port other than the `https` default.
 
 Report vulnerabilities per the VRP security policy (see the vrp-spec
 repository). Do not open public issues for security reports.

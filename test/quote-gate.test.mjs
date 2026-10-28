@@ -1,4 +1,4 @@
-// Safe-to-Quote gate (spec §7 offline-checkable conditions + §4 booking-URL
+// Safe-to-Quote gate (spec §7 offline-checkable conditions + §5.1 booking-URL
 // rules). Each negative case re-signs a mutated payload with the public
 // conformance test key, so the SIGNATURE stays valid and the gate — not the
 // crypto — is what rejects the offer.
@@ -97,12 +97,39 @@ for (const c of NEGATIVE_CASES) {
   });
 }
 
-test("gate accepts a subdomain of canonical_domain", () => {
+// §5.1 + §2 node URL: canonical_domain or www. + canonical_domain only.
+test("gate accepts www. followed by canonical_domain", () => {
   const r = verify(resignedEnvelope(base, (o) => {
-    o.booking.direct_booking_url = "https://book.example-host.invalid/checkout";
+    o.booking.direct_booking_url = "https://www.example-host.invalid/checkout";
   }));
   assert.equal(safeToQuote(r), true);
 });
+
+test("gate accepts the default https port written out", () => {
+  const r = verify(resignedEnvelope(base, (o) => {
+    o.booking.direct_booking_url = "https://example-host.invalid:443/checkout";
+  }));
+  assert.equal(safeToQuote(r), true);
+});
+
+const NOT_NODE_URLS = [
+  ["another name under canonical_domain", "https://airbnb.example-host.invalid/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["a name under www.", "https://book.www.example-host.invalid/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["canonical_domain as a label of another domain", "https://example-host.invalid.evil.example/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["a non-default port", "https://example-host.invalid:8443/book", QuoteFailure.BOOKING_URL_INVALID],
+  ["userinfo", "https://user@example-host.invalid/book", QuoteFailure.BOOKING_URL_INVALID],
+  ["userinfo with a password", "https://user:pw@example-host.invalid/book", QuoteFailure.BOOKING_URL_INVALID],
+];
+
+for (const [name, url, failure] of NOT_NODE_URLS) {
+  test(`gate rejects a booking url that is not a node URL: ${name}`, () => {
+    const r = verify(resignedEnvelope(base, (o) => { o.booking.direct_booking_url = url; }));
+    assert.equal(r.status, Status.VERIFIED, "signature must remain valid — the GATE rejects");
+    const q = quoteChecks(r);
+    assert.ok(q.failures.includes(failure), `expected ${failure}, got ${q.failures}`);
+    assert.equal(safeToQuote(r), false);
+  });
+}
 
 test("gate is fail-closed when canonical_domain is absent", () => {
   const r = verify(resignedEnvelope(base, (o) => { delete o.canonical_domain; }));

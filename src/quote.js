@@ -10,9 +10,10 @@
 //   - `valid_until` is present and fresh                   (via verifyOffer)
 //   - `availability.available` is true
 //   - `price.exact` is true
-//   - a direct booking URL is present — and per §4 it MUST be an absolute
-//     https URL whose host is the offer's `canonical_domain` or a subdomain
-//     of it; anything else is treated as unknown and fails the gate
+//   - a direct booking URL is present — and per §5.1 it MUST be a node URL
+//     (§2): https, host the offer's `canonical_domain` or `www.` followed by
+//     it, no userinfo, the default port; anything else is treated as unknown
+//     and fails the gate
 //   - `agent_permission.may_quote_as_official_direct_offer` is true
 //
 // The remaining three §7 conditions concern the DISCOVERY DOCUMENT (fetched
@@ -43,8 +44,8 @@ function normalizedHost(domain) {
   }
 }
 
-// §4: absolute https URL whose host is canonical_domain or a subdomain of it.
-// Returns a QuoteFailure code, or null when the URL passes.
+// §5.1: a node URL (§2) of the offer's canonical_domain. Returns a
+// QuoteFailure code, or null when the URL passes.
 function bookingUrlFailure(payload) {
   const url = payload?.booking?.direct_booking_url;
   if (typeof url !== "string" || url.length === 0) {
@@ -57,25 +58,23 @@ function bookingUrlFailure(payload) {
     return QuoteFailure.BOOKING_URL_INVALID;
   }
   if (parsed.protocol !== "https:") return QuoteFailure.BOOKING_URL_INVALID;
+  if (parsed.username || parsed.password || parsed.port) {
+    return QuoteFailure.BOOKING_URL_INVALID;
+  }
 
   const canonical = normalizedHost(payload?.canonical_domain);
   if (!canonical) return QuoteFailure.BOOKING_URL_HOST_MISMATCH; // cannot confirm -> unknown -> fail closed
   const host = parsed.hostname;
-  // Deliberately stricter than §4's registrable-domain wording: we accept the
-  // canonical_domain host itself or its children only. Deriving the registrable
-  // domain of an arbitrary canonical_domain would require a Public Suffix List
-  // (a dependency, and a fail-OPEN risk if approximated), so when
-  // canonical_domain is itself a subdomain, sibling subdomains are rejected.
-  // This errs fail-closed: it can refuse a spec-valid URL, never accept a
-  // third-party host.
-  if (host !== canonical && !host.endsWith(`.${canonical}`)) {
+  // canonical_domain or www. + canonical_domain, and no other name: another
+  // name under the domain (airbnb.example) may be served by another party.
+  if (host !== canonical && host !== `www.${canonical}`) {
     return QuoteFailure.BOOKING_URL_HOST_MISMATCH;
   }
   return null;
 }
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §4) against a
+ * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5.1) against a
  * `verifyOffer()` result.
  *
  * @param {import("./offer.js").OfferVerificationResult} verification
