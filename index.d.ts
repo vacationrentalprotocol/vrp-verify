@@ -102,7 +102,7 @@ export declare function verifyCompactJws(compactJws: string, jwksDoc: Jwks): Com
 export declare function verifyOffer(params: VerifyOfferParams): OfferVerificationResult;
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §4)
+ * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §5.1)
  * against a verifyOffer() result. The three discovery-document conditions
  * of §7 remain the caller's responsibility.
  */

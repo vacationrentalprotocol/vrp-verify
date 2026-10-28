@@ -32,7 +32,7 @@ Please include, as far as you can:
 - a concrete input — an envelope and a JWKS document — on which the verifier
   returns a verdict it should not: for example `verified` for a forged,
   tampered, or expired offer, or `safeToQuote()` returning `true` for an offer
-  that fails a §7 or §4 condition;
+  that fails a §7 or §5.1 condition;
 - steps to reproduce, ideally as a small vector in the style of
   [`test/vectors/`](./test/vectors/).
 
@@ -59,8 +59,8 @@ bug-bounty program**.
   rather than a fresh verdict.
 - **Fail-closed behaviour** — any input on which `verifyOffer()` returns
   `verified`, or `safeToQuote()` returns `true`, when a conforming verifier
-  must refuse. This includes the offline §7 quote conditions and the §4
-  host-pinned `direct_booking_url` check.
+  must refuse. This includes the offline §7 quote conditions and the §5.1
+  node-URL `direct_booking_url` check.
 
 **Out of scope** — not this package:
 
