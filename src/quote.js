@@ -1,7 +1,9 @@
 // Safe-to-Quote gate (VRP spec §7) — the offline-checkable portion.
 //
-// Spec §7 lists eleven conditions. Eight are checkable from the signed offer
-// and the caller-supplied JWKS, and this module checks all eight:
+// Spec §7 lists eleven conditions. This module checks the eight that are
+// checkable from the signed offer and the caller-supplied JWKS, and — from
+// 0.2.0 — the host-owned domain (§2) and the offer's binding to the domain it
+// was fetched from (§7), from the domain and the two lists the caller passes:
 //   - the JWKS contains an Ed25519 key matching the JWS   (via verifyOffer)
 //   - the compact JWS verifies against that JWKS           (via verifyOffer)
 //   - the signed payload matches the returned offer        (via verifyOffer,
@@ -15,13 +17,20 @@
 //     it, no userinfo, the default port; anything else is treated as unknown
 //     and fails the gate
 //   - `agent_permission.may_quote_as_official_direct_offer` is true
+//   - the signed `canonical_domain` is the domain the offer was fetched from
+//     (§7), and that domain is host-owned (§2): its own registrable domain
+//     under the ICANN section of the Public Suffix List, not under a brand or
+//     closed top-level domain. No domain, or no usable lists, is unknown
+//     (§2, §9) and fails the gate.
 //
-// The remaining three §7 conditions concern the DISCOVERY DOCUMENT (fetched
-// from the host-owned domain, declaring `protocol` and `protocol_version`).
-// They require network context this package deliberately does not have and
-// remain the CALLER'S RESPONSIBILITY. See README "What this package checks".
+// What remains the CALLER'S RESPONSIBILITY needs network context this package
+// deliberately does not have: fetching (over HTTPS, following only redirects
+// to node URLs, §2) and the discovery document itself (its `canonical_domain`
+// is the fetched domain, and it declares `protocol` and `protocol_version`).
+// See README "What this package checks".
 
 import { Status } from "./status.js";
+import { checkHostOwned, fetchedHost, isHostOwnedLists } from "./host-domain.js";
 
 /** Named codes for failed quote-gate conditions. */
 export const QuoteFailure = Object.freeze({
@@ -32,7 +41,37 @@ export const QuoteFailure = Object.freeze({
   BOOKING_URL_INVALID: "booking_url_invalid",
   BOOKING_URL_HOST_MISMATCH: "booking_url_host_mismatch",
   QUOTE_PERMISSION_NOT_GRANTED: "quote_permission_not_granted",
+  // §2, §7 (0.2.0): the caller did not say which domain the offer was fetched
+  // from, so the offer cannot be bound to a host-owned domain — unknown.
+  DOMAIN_UNKNOWN: "domain_unknown",
+  // §2, §9: no usable copy of the ICANN section of the Public Suffix List or
+  // of ICANN's gTLD list was passed — the node is unknown.
+  HOST_OWNED_UNKNOWN: "host_owned_unknown",
+  // §7: the signed `canonical_domain` is not the domain it was fetched from.
+  OFFER_DOMAIN_MISMATCH: "offer_domain_mismatch",
+  // §2: `canonical_domain` is not a host-owned domain. Same codes as the
+  // vrp-spec host-domain conformance vectors.
+  MALFORMED_DOMAIN: "malformed_domain",
+  PUBLIC_SUFFIX: "public_suffix",
+  NOT_HOST_OWNED: "not_host_owned",
+  CLOSED_TLD: "closed_tld",
 });
+
+// §2 host-owned domain and §7 offer binding. Returns QuoteFailure codes.
+function hostDomainFailures(payload, context) {
+  const fetched = fetchedHost(context?.domain);
+  if (fetched === null) return [QuoteFailure.DOMAIN_UNKNOWN];
+  const failures = [];
+  const canonical = payload?.canonical_domain;
+  if (canonical !== fetched) failures.push(QuoteFailure.OFFER_DOMAIN_MISMATCH);
+  if (!isHostOwnedLists(context?.hostOwnedLists)) {
+    failures.push(QuoteFailure.HOST_OWNED_UNKNOWN);
+    return failures;
+  }
+  const reason = checkHostOwned(canonical, context.hostOwnedLists);
+  if (reason) failures.push(reason);
+  return failures;
+}
 
 // Normalize a domain through the URL parser (lowercases, punycodes IDN).
 function normalizedHost(domain) {
@@ -74,14 +113,21 @@ function bookingUrlFailure(payload) {
 }
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5.1) against a
- * `verifyOffer()` result.
+ * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5.1, §2)
+ * against a `verifyOffer()` result.
  *
  * @param {import("./offer.js").OfferVerificationResult} verification
+ * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] } }} [context]
+ *        `domain`: the domain being verified — the host of the URL the offer
+ *        (and its discovery document) was requested from, before any
+ *        redirect. `hostOwnedLists`: the ICANN section of the Public Suffix
+ *        List and the Specification 13 top-level domains (see
+ *        icannRulesFromPsl, specification13FromGtlds). Without either, the
+ *        gate fails closed.
  * @returns {{ ok: boolean, failures: string[] }}  `ok` is true only when every
  *          condition passes; `failures` lists QuoteFailure codes otherwise.
  */
-export function quoteChecks(verification) {
+export function quoteChecks(verification, context) {
   const failures = [];
 
   if (!verification || verification.status !== Status.VERIFIED) {
@@ -101,15 +147,22 @@ export function quoteChecks(verification) {
   if (payload?.agent_permission?.may_quote_as_official_direct_offer !== true) {
     failures.push(QuoteFailure.QUOTE_PERMISSION_NOT_GRANTED);
   }
+  failures.push(...hostDomainFailures(payload, context));
 
   return { ok: failures.length === 0, failures };
 }
 
 /**
- * True only when every offline-checkable Safe-to-Quote condition passes.
- * The three discovery-document conditions of §7 remain the caller's
- * responsibility. Everything short of a full pass is false — fail closed.
+ * True only when every offline-checkable Safe-to-Quote condition passes,
+ * including the host-owned domain (§2) and the offer's binding to the domain
+ * it was fetched from (§7). Without `context.domain` and
+ * `context.hostOwnedLists` it is false. Fetching and the discovery document
+ * remain the caller's responsibility. Everything short of a full pass is
+ * false — fail closed.
+ *
+ * @param {import("./offer.js").OfferVerificationResult} verification
+ * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] } }} [context]
  */
-export function safeToQuote(verification) {
-  return quoteChecks(verification).ok;
+export function safeToQuote(verification, context) {
+  return quoteChecks(verification, context).ok;
 }
