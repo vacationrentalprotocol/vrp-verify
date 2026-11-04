@@ -5,3 +5,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    groups:
+      # Every github/codeql-action step in a workflow must run the same
+      # version (the action refuses to analyze otherwise), so init and
+      # analyze are bumped together in one pull request.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
