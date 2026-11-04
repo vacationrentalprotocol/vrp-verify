@@ -9,8 +9,18 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyOffer, safeToQuote, Status } from "../index.js";
 
-const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), "vectors");
+const testDir = dirname(fileURLToPath(import.meta.url));
+const vectorsDir = join(testDir, "vectors");
 const load = (f) => JSON.parse(readFileSync(join(vectorsDir, f), "utf8"));
+const hostDomain = JSON.parse(readFileSync(join(testDir, "host-domain", "vectors.v0.1.json"), "utf8"));
+// The vectors' offers name example-host.invalid (spec §2, §7 context, 0.2.0).
+const CONTEXT = {
+  domain: "example-host.invalid",
+  hostOwnedLists: {
+    icannRules: hostDomain.psl_icann_rules,
+    specification13Tlds: hostDomain.icann_specification13_tlds,
+  },
+};
 
 // Expected offer-level status per vector (derived from each vector's expected
 // block: 01 verified+fresh, 02 verified+stale, 03/05 signature_mismatch,
@@ -28,7 +38,8 @@ for (const [file, expected] of Object.entries(EXPECT)) {
     const v = load(file);
     const r = verifyOffer({ envelope: v.input, jwks: v.jwks, now: v.clock });
     assert.equal(r.status, expected, `${r.status} (${r.code}): ${r.reason}`);
-    assert.equal(safeToQuote(r), expected === Status.VERIFIED);
+    assert.equal(safeToQuote(r, CONTEXT), expected === Status.VERIFIED);
+    assert.equal(safeToQuote(r), false, "without the domain and the lists the gate is closed");
   });
 }
 
