@@ -71,6 +71,12 @@ export interface VerifyOfferParams {
   now?: Date | string;
 }
 
+export type HostDomainReasonCode =
+  | "malformed_domain"
+  | "public_suffix"
+  | "not_host_owned"
+  | "closed_tld";
+
 export type QuoteFailureCode =
   | "not_verified"
   | "availability_not_true"
@@ -78,7 +84,11 @@ export type QuoteFailureCode =
   | "booking_url_missing"
   | "booking_url_invalid"
   | "booking_url_host_mismatch"
-  | "quote_permission_not_granted";
+  | "quote_permission_not_granted"
+  | "domain_unknown"
+  | "host_owned_unknown"
+  | "offer_domain_mismatch"
+  | HostDomainReasonCode;
 
 export declare const QuoteFailure: {
   readonly NOT_VERIFIED: "not_verified";
@@ -88,12 +98,56 @@ export declare const QuoteFailure: {
   readonly BOOKING_URL_INVALID: "booking_url_invalid";
   readonly BOOKING_URL_HOST_MISMATCH: "booking_url_host_mismatch";
   readonly QUOTE_PERMISSION_NOT_GRANTED: "quote_permission_not_granted";
+  readonly DOMAIN_UNKNOWN: "domain_unknown";
+  readonly HOST_OWNED_UNKNOWN: "host_owned_unknown";
+  readonly OFFER_DOMAIN_MISMATCH: "offer_domain_mismatch";
+  readonly MALFORMED_DOMAIN: "malformed_domain";
+  readonly PUBLIC_SUFFIX: "public_suffix";
+  readonly NOT_HOST_OWNED: "not_host_owned";
+  readonly CLOSED_TLD: "closed_tld";
 };
+
+export declare const HostDomainReason: {
+  readonly MALFORMED_DOMAIN: "malformed_domain";
+  readonly PUBLIC_SUFFIX: "public_suffix";
+  readonly NOT_HOST_OWNED: "not_host_owned";
+  readonly CLOSED_TLD: "closed_tld";
+};
+
+/** The ICANN section of the Public Suffix List and the Specification 13 TLDs (spec §2). */
+export interface HostOwnedLists {
+  icannRules: readonly string[];
+  specification13Tlds: readonly string[];
+}
+
+/** What the caller knows and this package cannot fetch (spec §2, §7). */
+export interface QuoteContext {
+  /** The domain being verified: the host of the URL the offer was requested from, before any redirect. */
+  domain?: string;
+  /** Both lists, fetched by the caller from PSL_URL and GTLDS_URL. */
+  hostOwnedLists?: HostOwnedLists;
+}
 
 export interface QuoteCheckResult {
   ok: boolean;
   failures: QuoteFailureCode[];
 }
+
+export declare const PSL_URL: "https://publicsuffix.org/list/public_suffix_list.dat";
+export declare const GTLDS_URL: "https://www.icann.org/resources/registries/gtlds/v2/gtlds.json";
+export declare const CLOSED_TLDS: readonly ["booking", "hotels"];
+
+/** Spec §2: null when `domain` is host-owned, else the reason. Throws TypeError without usable lists. */
+export declare function checkHostOwned(domain: string, lists: HostOwnedLists): HostDomainReasonCode | null;
+
+/** The registrable domain of `host` under ICANN-section rules, or null for a public suffix. */
+export declare function registrableDomain(host: string, rules: readonly string[]): string | null;
+
+/** The ICANN-section rules of a Public Suffix List document, or null. */
+export declare function icannRulesFromPsl(text: string): string[] | null;
+
+/** The Specification 13 TLDs of ICANN's parsed gTLD list, or null (also when it marks none). */
+export declare function specification13FromGtlds(json: unknown): string[] | null;
 
 /** Verify a compact JWS against a JWKS, resolving the key by header `kid`. */
 export declare function verifyCompactJws(compactJws: string, jwksDoc: Jwks): CompactJwsResult;
@@ -102,15 +156,17 @@ export declare function verifyCompactJws(compactJws: string, jwksDoc: Jwks): Com
 export declare function verifyOffer(params: VerifyOfferParams): OfferVerificationResult;
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §4)
- * against a verifyOffer() result. The three discovery-document conditions
- * of §7 remain the caller's responsibility.
+ * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §5.1, §2)
+ * against a verifyOffer() result. Without `context.domain` and
+ * `context.hostOwnedLists` the result fails with `domain_unknown` or
+ * `host_owned_unknown`. Fetching and the discovery document remain the caller's.
  */
-export declare function quoteChecks(verification: OfferVerificationResult): QuoteCheckResult;
+export declare function quoteChecks(verification: OfferVerificationResult, context?: QuoteContext): QuoteCheckResult;
 
 /**
  * True only when every offline-checkable Safe-to-Quote condition passes
  * (signature, freshness, availability, exact price, booking-URL host pinning,
- * agent permission). Discovery-document checks remain the caller's.
+ * agent permission, host-owned domain, offer bound to the fetched domain).
+ * Without a context it is false.
  */
-export declare function safeToQuote(verification: OfferVerificationResult): boolean;
+export declare function safeToQuote(verification: OfferVerificationResult, context?: QuoteContext): boolean;

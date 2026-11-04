@@ -1,4 +1,4 @@
-// Safe-to-Quote gate (spec §7 offline-checkable conditions + §4 booking-URL
+// Safe-to-Quote gate (spec §7 offline-checkable conditions + §5.1 booking-URL
 // rules). Each negative case re-signs a mutated payload with the public
 // conformance test key, so the SIGNATURE stays valid and the gate — not the
 // crypto — is what rejects the offer.
@@ -11,8 +11,20 @@ import { fileURLToPath } from "node:url";
 import { verifyOffer, safeToQuote, quoteChecks, QuoteFailure, Status } from "../index.js";
 import { resignedEnvelope } from "./helpers.mjs";
 
-const vectorsDir = join(dirname(fileURLToPath(import.meta.url)), "vectors");
+const testDir = dirname(fileURLToPath(import.meta.url));
+const vectorsDir = join(testDir, "vectors");
 const base = JSON.parse(readFileSync(join(vectorsDir, "01-valid-fresh.json"), "utf8"));
+const hostDomain = JSON.parse(readFileSync(join(testDir, "host-domain", "vectors.v0.1.json"), "utf8"));
+
+// 0.2.0: the gate needs the domain the offer was fetched from and both lists
+// (spec §2, §7). The vectors' offers name example-host.invalid.
+const CONTEXT = {
+  domain: "example-host.invalid",
+  hostOwnedLists: {
+    icannRules: hostDomain.psl_icann_rules,
+    specification13Tlds: hostDomain.icann_specification13_tlds,
+  },
+};
 
 // Every case is evaluated at the base vector's own clock (offer is fresh).
 const verify = (envelope) => verifyOffer({ envelope, jwks: base.jwks, now: base.clock });
@@ -20,17 +32,17 @@ const verify = (envelope) => verifyOffer({ envelope, jwks: base.jwks, now: base.
 test("baseline: the valid fresh vector passes the full gate", () => {
   const r = verify(base.input);
   assert.equal(r.status, Status.VERIFIED);
-  const q = quoteChecks(r);
+  const q = quoteChecks(r, CONTEXT);
   assert.deepEqual(q, { ok: true, failures: [] });
-  assert.equal(safeToQuote(r), true);
+  assert.equal(safeToQuote(r, CONTEXT), true);
 });
 
 test("expired offer fails the gate with not_verified", () => {
   const v02 = JSON.parse(readFileSync(join(vectorsDir, "02-valid-expired.json"), "utf8"));
   const r = verifyOffer({ envelope: v02.input, jwks: v02.jwks, now: v02.clock });
   assert.equal(r.status, Status.EXPIRED);
-  assert.deepEqual(quoteChecks(r).failures, [QuoteFailure.NOT_VERIFIED]);
-  assert.equal(safeToQuote(r), false);
+  assert.deepEqual(quoteChecks(r, CONTEXT).failures, [QuoteFailure.NOT_VERIFIED]);
+  assert.equal(safeToQuote(r, CONTEXT), false);
 });
 
 const NEGATIVE_CASES = [
@@ -90,24 +102,54 @@ for (const c of NEGATIVE_CASES) {
   test(`gate rejects: ${c.name}`, () => {
     const r = verify(resignedEnvelope(base, c.mutate));
     assert.equal(r.status, Status.VERIFIED, "signature must remain valid — the GATE rejects");
-    const q = quoteChecks(r);
+    const q = quoteChecks(r, CONTEXT);
     assert.equal(q.ok, false);
     assert.ok(q.failures.includes(c.failure), `expected ${c.failure}, got ${q.failures}`);
-    assert.equal(safeToQuote(r), false);
+    assert.equal(safeToQuote(r, CONTEXT), false);
   });
 }
 
-test("gate accepts a subdomain of canonical_domain", () => {
+// §5.1 + §2 node URL: canonical_domain or www. + canonical_domain only.
+test("gate accepts www. followed by canonical_domain", () => {
   const r = verify(resignedEnvelope(base, (o) => {
-    o.booking.direct_booking_url = "https://book.example-host.invalid/checkout";
+    o.booking.direct_booking_url = "https://www.example-host.invalid/checkout";
   }));
-  assert.equal(safeToQuote(r), true);
+  assert.equal(safeToQuote(r, CONTEXT), true);
 });
+
+test("gate accepts the default https port written out", () => {
+  const r = verify(resignedEnvelope(base, (o) => {
+    o.booking.direct_booking_url = "https://example-host.invalid:443/checkout";
+  }));
+  assert.equal(safeToQuote(r, CONTEXT), true);
+});
+
+const NOT_NODE_URLS = [
+  ["another name under canonical_domain", "https://airbnb.example-host.invalid/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["a name under www.", "https://book.www.example-host.invalid/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["canonical_domain as a label of another domain", "https://example-host.invalid.evil.example/book", QuoteFailure.BOOKING_URL_HOST_MISMATCH],
+  ["a non-default port", "https://example-host.invalid:8443/book", QuoteFailure.BOOKING_URL_INVALID],
+  ["userinfo", "https://user@example-host.invalid/book", QuoteFailure.BOOKING_URL_INVALID],
+  ["userinfo with a password", "https://user:pw@example-host.invalid/book", QuoteFailure.BOOKING_URL_INVALID],
+];
+
+for (const [name, url, failure] of NOT_NODE_URLS) {
+  test(`gate rejects a booking url that is not a node URL: ${name}`, () => {
+    const r = verify(resignedEnvelope(base, (o) => { o.booking.direct_booking_url = url; }));
+    assert.equal(r.status, Status.VERIFIED, "signature must remain valid — the GATE rejects");
+    const q = quoteChecks(r, CONTEXT);
+    assert.ok(q.failures.includes(failure), `expected ${failure}, got ${q.failures}`);
+    assert.equal(safeToQuote(r, CONTEXT), false);
+  });
+}
 
 test("gate is fail-closed when canonical_domain is absent", () => {
   const r = verify(resignedEnvelope(base, (o) => { delete o.canonical_domain; }));
   assert.equal(r.status, Status.VERIFIED);
-  assert.ok(quoteChecks(r).failures.includes(QuoteFailure.BOOKING_URL_HOST_MISMATCH));
+  const { failures } = quoteChecks(r, CONTEXT);
+  assert.ok(failures.includes(QuoteFailure.BOOKING_URL_HOST_MISMATCH));
+  assert.ok(failures.includes(QuoteFailure.OFFER_DOMAIN_MISMATCH));
+  assert.ok(failures.includes(QuoteFailure.MALFORMED_DOMAIN));
 });
 
 test("multiple failed conditions are all reported", () => {
@@ -115,7 +157,7 @@ test("multiple failed conditions are all reported", () => {
     o.availability.available = false;
     o.price.exact = false;
   }));
-  const q = quoteChecks(r);
+  const q = quoteChecks(r, CONTEXT);
   assert.deepEqual(
     [...q.failures].sort(),
     [QuoteFailure.AVAILABILITY_NOT_TRUE, QuoteFailure.PRICE_NOT_EXACT].sort(),
