@@ -22,6 +22,7 @@ const CONTEXT = {
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
   request: { check_in: "2026-09-12", check_out: "2026-09-15", guests: 2 },
+  now: "2026-06-02T12:05:00Z", // the fresh vector's clock; the gate judges at the quoting instant
 };
 
 // Expected offer-level status per vector (derived from each vector's expected

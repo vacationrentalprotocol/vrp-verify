@@ -43,6 +43,9 @@ export const OfferRule = Object.freeze({
   INVALID_LANGUAGE: "invalid_language",
   ASKED_STAY_UNKNOWN: "asked_stay_unknown",
   REQUEST_MISMATCH: "request_mismatch",
+  // Not a vector reason: the verifier's own clock could not be read, so no
+  // rule that depends on it can be judged (§8: fail closed).
+  CLOCK_UNUSABLE: "clock_unusable",
 });
 
 const DAY_MS = 86400000;
@@ -77,13 +80,21 @@ export function parseDateTime(value) {
   return exists ? t + (m[7] ? Number(m[7]) * 1000 : 0) : NaN;
 }
 
-/** The instant `now` names, as ms: a number, a Date or a parseable string; NaN otherwise. */
+/**
+ * The instant `now` names, as ms: the current time when `now` is omitted
+ * (undefined); else a finite number, a valid Date or a parseable string. NaN
+ * for anything else (NaN, an Invalid Date, an unparseable string, null), so a
+ * caller that passes a broken clock never reads as "now".
+ */
 export function toClock(now) {
+  if (now === undefined) return Date.now();
   if (typeof now === "number") return Number.isFinite(now) ? now : NaN;
   if (now instanceof Date) return now.getTime();
-  if (now === undefined || now === null) return Date.now();
-  const t = Date.parse(String(now));
-  return Number.isFinite(t) ? t : NaN;
+  if (typeof now === "string") {
+    const t = Date.parse(now);
+    return Number.isFinite(t) ? t : NaN;
+  }
+  return NaN;
 }
 
 /**
@@ -160,10 +171,14 @@ export function isAskedStay(asked) {
 /**
  * The reasons an offer is not quotable under the offer rules (§5, §6, §7); an
  * empty list when it meets them. `now` is an instant (ms, a Date or a date-time
- * string); `asked` is the stay the agent asked for, or null when the verifier
- * does not know it. Same result, same order, as the VRP offer-rules vectors.
+ * string; omitted: the current time); `asked` is the stay the agent asked for,
+ * or null when the verifier does not know it. Same result, same order, as the
+ * VRP offer-rules vectors; a `now` that cannot be read gives `clock_unusable`.
  */
 export function checkOfferRules(payload, { now, asked } = {}) {
   const clock = toClock(now);
+  // Every rule but the forms of the dates depends on the clock; without a
+  // usable one nothing can be judged, and an empty list would read as a pass.
+  if (!Number.isFinite(clock)) return [OfferRule.CLOCK_UNUSABLE];
   return [...lifetimeReasons(payload, clock), ...requestReasons(payload, clock, asked)];
 }

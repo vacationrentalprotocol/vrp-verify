@@ -37,7 +37,10 @@ const hostDomain = JSON.parse(readFileSync(join(testDir, "host-domain", "vectors
 
 const LISTS = { icannRules: hostDomain.psl_icann_rules, specification13Tlds: hostDomain.icann_specification13_tlds };
 const ASKED = { ...base.input.offer.request }; // 2026-09-12 → 2026-09-15, 2 guests
-const ctx = (request = ASKED, now) => ({ domain: "example-host.invalid", hostOwnedLists: LISTS, request, ...(now !== undefined ? { now } : {}) });
+// The gate judges at the quoting instant (default: the current time); the
+// base vector's clock keeps these cases deterministic unless a case says otherwise.
+const ctx = (request = ASKED, now = base.clock) => ({ domain: "example-host.invalid", hostOwnedLists: LISTS, request, now });
+const FUTURE_STAY = { check_in: "2027-03-08", check_out: "2027-03-12", guests: 2 };
 const verify = (envelope, now = base.clock) => verifyOffer({ envelope, jwks: base.jwks, now });
 const T0 = Date.parse(base.clock); // 2026-06-02T12:05:00Z
 const iso = (ms) => new Date(ms).toISOString();
@@ -77,7 +80,7 @@ for (const v of doc.vectors) {
   test(`offer-rules vector ${v.name}: verifyOffer + quoteChecks`, () => {
     const r = verifyOffer({ envelope: envelopeFor(v), jwks: base.jwks, now: doc.now });
     assert.notEqual(r.code, Reason.SIGNATURE_MISMATCH, "the signature is valid; the rules decide");
-    const context = ctx(v.asked); // null stays null: the verifier does not know the stay
+    const context = ctx(v.asked, doc.now); // null stays null: the verifier does not know the stay
     const q = quoteChecks(r, context);
     const meets = v.expected.reasons.length === 0;
     assert.equal(q.ok, meets, `${v.name}: ${r.status} ${r.code} ${q.failures}`);
@@ -281,6 +284,57 @@ for (const tag of ["sv", "sv-SE", "sv-se", "zh-Hant-TW", "es-419", "nb-NO"]) {
 
 // ---------------------------------------------------------------------------
 // Quoting later than verifying, and the signed payload as the only source
+
+test("quoting later than verifying, without context.now, is judged at the current time: an offer verified fresh and quoted after valid_until is refused", () => {
+  // valid_until one second ago by the real clock; verified 60 s before it, when it was fresh.
+  const validUntil = Date.now() - 1_000;
+  const envelope = resignedEnvelope(base, (o) => {
+    o.generated_at = iso(validUntil - 600_000);
+    o.valid_until = iso(validUntil);
+    o.request = { ...FUTURE_STAY };
+  });
+  const r = verify(envelope, validUntil - 60_000);
+  assert.equal(r.status, Status.VERIFIED, "fresh when verified");
+  const { now, ...withoutNow } = ctx(FUTURE_STAY);
+  const later = quoteChecks(r, withoutNow);
+  assert.equal(later.ok, false);
+  assert.deepEqual(later.failures, [QuoteFailure.EXPIRED]);
+  assert.equal(safeToQuote(r, withoutNow), false);
+  // The same gate at the verification instant, stated explicitly, passes.
+  assert.deepEqual(quoteChecks(r, ctx(FUTURE_STAY, validUntil - 60_000)), { ok: true, failures: [] });
+});
+
+test("without context.now, a fresh offer for a future stay passes at the current time", () => {
+  const r = verify(resignedEnvelope(base, (o) => {
+    o.generated_at = iso(Date.now() - 1_000);
+    o.valid_until = iso(Date.now() + 600_000);
+    o.request = { ...FUTURE_STAY };
+  }), Date.now());
+  const { now, ...withoutNow } = ctx(FUTURE_STAY);
+  assert.deepEqual(quoteChecks(r, withoutNow), { ok: true, failures: [] });
+});
+
+for (const [name, now] of [["NaN", NaN], ["an unparseable string", "not a date"], ["an Invalid Date", new Date("not a date")], ["null", null], ["Infinity", Infinity], ["an object", {}]]) {
+  test(`checkOfferRules fails closed with clock_unusable when now is ${name}`, () => {
+    assert.deepEqual(checkOfferRules(base.input.offer, { now, asked: ASKED }), [OfferRule.CLOCK_UNUSABLE]);
+  });
+  test(`quoteChecks fails closed with clock_unusable when context.now is ${name}`, () => {
+    const r = verify(base.input);
+    assert.equal(r.status, Status.VERIFIED);
+    assert.deepEqual(quoteChecks(r, ctx(ASKED, now)), { ok: false, failures: [QuoteFailure.CLOCK_UNUSABLE] });
+  });
+  test(`verifyOffer is unverifiable with clock_unusable when now is ${name}`, () => {
+    const r = verifyOffer({ envelope: base.input, jwks: base.jwks, now });
+    assert.equal(r.status, Status.UNVERIFIABLE);
+    assert.equal(r.code, Reason.CLOCK_UNUSABLE);
+  });
+}
+
+test("checkOfferRules without now judges at the current time", () => {
+  const payload = { generated_at: iso(Date.now() - 1_000), valid_until: iso(Date.now() + 600_000), request: { ...FUTURE_STAY } };
+  assert.deepEqual(checkOfferRules(payload, { asked: FUTURE_STAY }), []);
+  assert.deepEqual(checkOfferRules({ ...payload, valid_until: iso(Date.now() - 1) }, { asked: FUTURE_STAY }), [OfferRule.EXPIRED]);
+});
 
 test("an offer verified fresh but quoted after valid_until fails the gate (expired)", () => {
   const r = verify(base.input); // fresh at the base clock

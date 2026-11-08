@@ -35,7 +35,8 @@ export type OfferRuleCode =
   | "check_in_in_past"
   | "invalid_language"
   | "asked_stay_unknown"
-  | "request_mismatch";
+  | "request_mismatch"
+  | "clock_unusable";
 
 export declare const OfferRule: {
   readonly MALFORMED_GENERATED_AT: "malformed_generated_at";
@@ -52,6 +53,7 @@ export declare const OfferRule: {
   readonly INVALID_LANGUAGE: "invalid_language";
   readonly ASKED_STAY_UNKNOWN: "asked_stay_unknown";
   readonly REQUEST_MISMATCH: "request_mismatch";
+  readonly CLOCK_UNUSABLE: "clock_unusable";
 };
 
 /** Spec §5: the longest lifetime a signed offer may have, in seconds. */
@@ -175,6 +177,7 @@ export declare const QuoteFailure: {
   readonly INVALID_LANGUAGE: "invalid_language";
   readonly ASKED_STAY_UNKNOWN: "asked_stay_unknown";
   readonly REQUEST_MISMATCH: "request_mismatch";
+  readonly CLOCK_UNUSABLE: "clock_unusable";
 };
 
 export declare const HostDomainReason: {
@@ -208,7 +211,7 @@ export interface QuoteContext {
   hostOwnedLists?: HostOwnedLists;
   /** The stay asked for. Without it the gate fails with `asked_stay_unknown` (0.3.0). */
   request?: AskedStay;
-  /** The quoting instant; default: the instant the verification was judged at. */
+  /** The quoting instant; default: the current time. Pass one for a deterministic test. A value that cannot be read fails with `clock_unusable`. */
   now?: Date | string | number;
 }
 
@@ -243,7 +246,9 @@ export declare function verifyOffer(params: VerifyOfferParams): OfferVerificatio
  * The reasons a signed payload is not quotable under the offer rules beyond the
  * signature (spec §5, §6, §7), in the order of the VRP offer-rules conformance
  * vectors; an empty array when it meets them. `now` is the evaluation instant
- * (default: now); `asked` is the stay the agent asked for, or null when unknown.
+ * (default: the current time; a value that cannot be read gives
+ * `["clock_unusable"]`); `asked` is the stay the agent asked for, or null when
+ * unknown.
  */
 export declare function checkOfferRules(
   payload: Record<string, unknown> | null | undefined,

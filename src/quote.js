@@ -128,14 +128,16 @@ function bookingUrlFailure(payload) {
   return null;
 }
 
-// §5, §6, §7: the offer rules beyond the signature, judged at the quoting
-// instant (`context.now`, else the instant verifyOffer judged at, else now)
-// against the stay the caller asked for (`context.request`). The lifetime is
-// judged again here so that an offer verified earlier and quoted later is
-// still fresh when quoted.
+// §5, §6, §7: the offer rules beyond the signature, judged at the QUOTING
+// instant against the stay the caller asked for (`context.request`). The
+// quoting instant is `context.now` when the caller gives one (a recorded
+// clock, a deterministic test), else the current time — never the instant an
+// earlier verifyOffer judged at, so an offer verified fresh and quoted after
+// its valid_until is refused here (expired). A clock that cannot be read
+// fails closed (clock_unusable).
 function offerRuleFailures(verification, context) {
-  const clock = toClock(context?.now ?? verification.evaluatedAt ?? undefined);
-  if (!Number.isFinite(clock)) return [QuoteFailure.NOT_VERIFIED];
+  const clock = toClock(context?.now);
+  if (!Number.isFinite(clock)) return [QuoteFailure.CLOCK_UNUSABLE];
   const payload = verification.payload;
   return [...lifetimeReasons(payload, clock), ...requestReasons(payload, clock, context?.request)];
 }
@@ -153,9 +155,11 @@ function offerRuleFailures(verification, context) {
  *        icannRulesFromPsl, specification13FromGtlds). `request`: the stay
  *        the caller asked the offer endpoint for (§4): `check_in` and
  *        `check_out` as `YYYY-MM-DD`, `guests` an integer. `now`: the
- *        quoting instant (default: the instant `verification` was judged
- *        at). Without the domain, the lists or the request, the gate fails
- *        closed (`domain_unknown`, `host_owned_unknown`, `asked_stay_unknown`).
+ *        quoting instant (default: the current time; pass one for a
+ *        deterministic test). Without the domain, the lists or the request,
+ *        the gate fails closed (`domain_unknown`, `host_owned_unknown`,
+ *        `asked_stay_unknown`); so does a `now` that cannot be read
+ *        (`clock_unusable`).
  * @returns {{ ok: boolean, failures: string[] }}  `ok` is true only when every
  *          condition passes; `failures` lists QuoteFailure codes otherwise.
  */

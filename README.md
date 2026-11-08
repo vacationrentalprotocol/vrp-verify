@@ -94,7 +94,17 @@ and at most 900 seconds after it, `generated_at` is at most 60 seconds ahead of
 §7 on `request`: the dates exist, `check_out` is later than `check_in`,
 `check_in` is not earlier than the day before the UTC date, `language` (when
 present) is a language tag, and `check_in`, `check_out` and `guests` equal the
-stay you pass as `context.request`. Update your calls to pass `request`; the
+stay you pass as `context.request`. `quoteChecks()` judges the lifetime again
+at the quoting instant — `context.now` when you pass one, else the current
+time — so an offer verified fresh and quoted after its `valid_until` fails with
+`expired`. A `now` that cannot be read (`NaN`, an Invalid Date, an unparseable
+string) fails with `clock_unusable` in `verifyOffer()`, `quoteChecks()` and
+`checkOfferRules()`.
+
+**Migration.** A caller that upgrades without passing `context.request` gets
+`false` from `safeToQuote()` for every offer, valid ones included
+(`asked_stay_unknown`): the gate no longer has a way to know whether the signed
+stay is the one asked for. Pass `{ domain, hostOwnedLists, request }`; the
 reason codes are those of the VRP offer-rules conformance vectors.
 
 ### Changed in 0.2.0
@@ -186,8 +196,8 @@ top; `quoteChecks()` names each failed condition
 `offer_domain_mismatch`, `malformed_domain`, `public_suffix`, `not_host_owned`,
 `closed_tld`, `request_missing`, `invalid_check_in`, `invalid_check_out`,
 `check_out_not_after_check_in`, `check_in_in_past`, `invalid_language`,
-`asked_stay_unknown`, `request_mismatch`, a lifetime code when quoting later
-than verifying, or `not_verified`). The host-domain codes are the ones the VRP
+`asked_stay_unknown`, `request_mismatch`, a lifetime code such as `expired`
+when quoting later than verifying, `clock_unusable`, or `not_verified`). The host-domain codes are the ones the VRP
 host-domain conformance vectors use, the offer-rules codes are the ones the VRP
 offer-rules conformance vectors use, and `checkHostOwned(domain, lists)` and
 `checkOfferRules(payload, { now, asked })` are exported for checking a domain,

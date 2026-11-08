@@ -26,6 +26,9 @@ const CONTEXT = {
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
   request: { ...base.input.offer.request },
+  // The quoting instant defaults to the current time; the vector's clock
+  // keeps these cases deterministic.
+  now: base.clock,
 };
 
 // Every case is evaluated at the base vector's own clock (offer is fresh).
