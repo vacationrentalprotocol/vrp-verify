@@ -13,7 +13,53 @@ export type ReasonCode =
   | "malformed_payload"
   | "no_jws"
   | "payload_offer_mismatch"
-  | "valid_until_unusable";
+  | "valid_until_unusable"
+  | "generated_at_unusable"
+  | "lifetime_not_positive"
+  | "lifetime_too_long"
+  | "generated_at_in_future"
+  | "clock_unusable";
+
+/** The offer rules beyond the signature (spec §5, §6, §7), in the vocabulary of the VRP offer-rules conformance vectors. */
+export type OfferRuleCode =
+  | "malformed_generated_at"
+  | "malformed_valid_until"
+  | "lifetime_not_positive"
+  | "lifetime_too_long"
+  | "generated_at_in_future"
+  | "expired"
+  | "request_missing"
+  | "invalid_check_in"
+  | "invalid_check_out"
+  | "check_out_not_after_check_in"
+  | "check_in_in_past"
+  | "invalid_language"
+  | "asked_stay_unknown"
+  | "request_mismatch";
+
+export declare const OfferRule: {
+  readonly MALFORMED_GENERATED_AT: "malformed_generated_at";
+  readonly MALFORMED_VALID_UNTIL: "malformed_valid_until";
+  readonly LIFETIME_NOT_POSITIVE: "lifetime_not_positive";
+  readonly LIFETIME_TOO_LONG: "lifetime_too_long";
+  readonly GENERATED_AT_IN_FUTURE: "generated_at_in_future";
+  readonly EXPIRED: "expired";
+  readonly REQUEST_MISSING: "request_missing";
+  readonly INVALID_CHECK_IN: "invalid_check_in";
+  readonly INVALID_CHECK_OUT: "invalid_check_out";
+  readonly CHECK_OUT_NOT_AFTER_CHECK_IN: "check_out_not_after_check_in";
+  readonly CHECK_IN_IN_PAST: "check_in_in_past";
+  readonly INVALID_LANGUAGE: "invalid_language";
+  readonly ASKED_STAY_UNKNOWN: "asked_stay_unknown";
+  readonly REQUEST_MISMATCH: "request_mismatch";
+};
+
+/** Spec §5: the longest lifetime a signed offer may have, in seconds. */
+export declare const MAX_LIFETIME_SECONDS: 900;
+/** Spec §6: how far ahead of the verifier's clock generated_at may be, in seconds. */
+export declare const CLOCK_SKEW_SECONDS: 60;
+/** Spec §5: the form of request.language. */
+export declare const LANGUAGE_TAG: RegExp;
 
 export declare const Status: {
   readonly VERIFIED: "verified";
@@ -33,6 +79,11 @@ export declare const Reason: {
   readonly NO_JWS: "no_jws";
   readonly PAYLOAD_OFFER_MISMATCH: "payload_offer_mismatch";
   readonly VALID_UNTIL_UNUSABLE: "valid_until_unusable";
+  readonly GENERATED_AT_UNUSABLE: "generated_at_unusable";
+  readonly LIFETIME_NOT_POSITIVE: "lifetime_not_positive";
+  readonly LIFETIME_TOO_LONG: "lifetime_too_long";
+  readonly GENERATED_AT_IN_FUTURE: "generated_at_in_future";
+  readonly CLOCK_UNUSABLE: "clock_unusable";
 };
 
 export interface Jwk {
@@ -62,13 +113,17 @@ export interface OfferVerificationResult {
   header: Record<string, unknown> | null;
   payload: Record<string, unknown> | null;
   payloadMatchesOffer: boolean | null;
+  /** The instant the lifetime was judged at (ISO date-time); null when the verdict was reached before the clock mattered. */
+  evaluatedAt: string | null;
+  /** Every lifetime rule (spec §5, §6) the signed payload breaks at that instant; empty when none or when the signature did not verify. */
+  reasons: OfferRuleCode[];
 }
 
 export interface VerifyOfferParams {
   envelope?: Record<string, unknown>;
   jws?: string;
   jwks: Jwks;
-  now?: Date | string;
+  now?: Date | string | number;
 }
 
 export type HostDomainReasonCode =
@@ -88,7 +143,8 @@ export type QuoteFailureCode =
   | "domain_unknown"
   | "host_owned_unknown"
   | "offer_domain_mismatch"
-  | HostDomainReasonCode;
+  | HostDomainReasonCode
+  | OfferRuleCode;
 
 export declare const QuoteFailure: {
   readonly NOT_VERIFIED: "not_verified";
@@ -105,6 +161,20 @@ export declare const QuoteFailure: {
   readonly PUBLIC_SUFFIX: "public_suffix";
   readonly NOT_HOST_OWNED: "not_host_owned";
   readonly CLOSED_TLD: "closed_tld";
+  readonly MALFORMED_GENERATED_AT: "malformed_generated_at";
+  readonly MALFORMED_VALID_UNTIL: "malformed_valid_until";
+  readonly LIFETIME_NOT_POSITIVE: "lifetime_not_positive";
+  readonly LIFETIME_TOO_LONG: "lifetime_too_long";
+  readonly GENERATED_AT_IN_FUTURE: "generated_at_in_future";
+  readonly EXPIRED: "expired";
+  readonly REQUEST_MISSING: "request_missing";
+  readonly INVALID_CHECK_IN: "invalid_check_in";
+  readonly INVALID_CHECK_OUT: "invalid_check_out";
+  readonly CHECK_OUT_NOT_AFTER_CHECK_IN: "check_out_not_after_check_in";
+  readonly CHECK_IN_IN_PAST: "check_in_in_past";
+  readonly INVALID_LANGUAGE: "invalid_language";
+  readonly ASKED_STAY_UNKNOWN: "asked_stay_unknown";
+  readonly REQUEST_MISMATCH: "request_mismatch";
 };
 
 export declare const HostDomainReason: {
@@ -120,12 +190,26 @@ export interface HostOwnedLists {
   specification13Tlds: readonly string[];
 }
 
-/** What the caller knows and this package cannot fetch (spec §2, §7). */
+/** The stay the caller asked the offer endpoint for (spec §4, §7). */
+export interface AskedStay {
+  /** Arrival date, YYYY-MM-DD. */
+  check_in: string;
+  /** Departure date, YYYY-MM-DD. */
+  check_out: string;
+  /** Guest count, an integer of at least 1. */
+  guests: number;
+}
+
+/** What the caller knows and this package cannot fetch (spec §2, §4, §7). */
 export interface QuoteContext {
   /** The domain being verified: the host of the URL the offer was requested from, before any redirect. */
   domain?: string;
   /** Both lists, fetched by the caller from PSL_URL and GTLDS_URL. */
   hostOwnedLists?: HostOwnedLists;
+  /** The stay asked for. Without it the gate fails with `asked_stay_unknown` (0.3.0). */
+  request?: AskedStay;
+  /** The quoting instant; default: the instant the verification was judged at. */
+  now?: Date | string | number;
 }
 
 export interface QuoteCheckResult {
@@ -156,17 +240,30 @@ export declare function verifyCompactJws(compactJws: string, jwksDoc: Jwks): Com
 export declare function verifyOffer(params: VerifyOfferParams): OfferVerificationResult;
 
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §5.1, §2)
- * against a verifyOffer() result. Without `context.domain` and
- * `context.hostOwnedLists` the result fails with `domain_unknown` or
- * `host_owned_unknown`. Fetching and the discovery document remain the caller's.
+ * The reasons a signed payload is not quotable under the offer rules beyond the
+ * signature (spec §5, §6, §7), in the order of the VRP offer-rules conformance
+ * vectors; an empty array when it meets them. `now` is the evaluation instant
+ * (default: now); `asked` is the stay the agent asked for, or null when unknown.
+ */
+export declare function checkOfferRules(
+  payload: Record<string, unknown> | null | undefined,
+  options?: { now?: Date | string | number; asked?: AskedStay | null },
+): OfferRuleCode[];
+
+/**
+ * Evaluate the offline-checkable Safe-to-Quote conditions (spec §7, §5, §5.1,
+ * §6, §2) against a verifyOffer() result. Without `context.domain`,
+ * `context.hostOwnedLists` and `context.request` the result fails with
+ * `domain_unknown`, `host_owned_unknown` or `asked_stay_unknown`. Fetching and
+ * the discovery document remain the caller's.
  */
 export declare function quoteChecks(verification: OfferVerificationResult, context?: QuoteContext): QuoteCheckResult;
 
 /**
  * True only when every offline-checkable Safe-to-Quote condition passes
- * (signature, freshness, availability, exact price, booking-URL host pinning,
- * agent permission, host-owned domain, offer bound to the fetched domain).
- * Without a context it is false.
+ * (signature, lifetime and freshness, the dates and the stay asked for,
+ * availability, exact price, booking-URL host pinning, agent permission,
+ * host-owned domain, offer bound to the fetched domain). Without a context it
+ * is false.
  */
 export declare function safeToQuote(verification: OfferVerificationResult, context?: QuoteContext): boolean;

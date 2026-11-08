@@ -54,9 +54,17 @@ bug-bounty program**.
 - **JWKS handling** — `kid` lookup and key-shape checks (`kty: "OKP"`,
   `crv: "Ed25519"`), and the rule that an absent or unusable key yields
   `unverifiable`, never `verified`.
-- **Freshness** — evaluation of `valid_until` against the injected `now`, and
-  the rule that a missing or malformed `valid_until` yields `unverifiable`
-  rather than a fresh verdict.
+- **Freshness and lifetime** — evaluation of `generated_at` and `valid_until`
+  against the injected `now` (spec §5, §6): a missing or malformed instant
+  yields `unverifiable`, a lifetime a node must not sign (not positive, longer
+  than 900 seconds, started more than 60 seconds in the future) yields
+  `invalid`, and a passed `valid_until` yields `expired`, never `verified`.
+- **The stay asked for** — the rule that the signed `request` must be the
+  stay the caller passes (§7), on dates that exist and have not passed (§5),
+  and that a gate call without the stay asked for is closed.
+- **Signed payload only** — every value the gate reads comes from the
+  verified payload; any input on which an unsigned envelope member changes a
+  verdict is in scope.
 - **Fail-closed behaviour** — any input on which `verifyOffer()` returns
   `verified`, or `safeToQuote()` returns `true`, when a conforming verifier
   must refuse. This includes the offline §7 quote conditions and the §5.1

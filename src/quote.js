@@ -1,15 +1,24 @@
 // Safe-to-Quote gate (VRP spec §7) — the offline-checkable portion.
 //
-// Spec §7 lists eleven conditions. This module checks the eight that are
-// checkable from the signed offer and the caller-supplied JWKS, and — from
-// 0.2.0 — the host-owned domain (§2) and the offer's binding to the domain it
-// was fetched from (§7), from the domain and the two lists the caller passes:
+// Spec §7 lists sixteen conditions. This module checks every one that is
+// decidable from the signed offer, the caller-supplied JWKS, the domain the
+// offer was fetched from, the two public lists of §2, the stay the caller asked
+// for and the clock:
 //   - the JWKS contains an Ed25519 key matching the JWS   (via verifyOffer)
 //   - the compact JWS verifies against that JWKS           (via verifyOffer)
 //   - the signed payload matches the returned offer        (via verifyOffer,
 //     when an envelope with a plaintext offer is supplied; with a bare JWS
 //     the signed payload is itself the offer, so there is nothing to compare)
-//   - `valid_until` is present and fresh                   (via verifyOffer)
+//   - `valid_until` is present and fresh, and `generated_at` and `valid_until`
+//     meet §5 and §6 (well-formed, a positive lifetime of at most 900 seconds,
+//     generated_at at most 60 seconds ahead of the clock)   (via verifyOffer;
+//     re-checked here at the quoting instant)
+//   - `request.check_in` and `request.check_out` exist, `check_out` is later
+//     than `check_in`, `check_in` is not earlier than the day before the UTC
+//     date; `request.language`, when present, has the form §5 gives
+//   - `request.check_in`, `check_out` and `guests` are the stay the agent
+//     asked for — from `context.request`; without it the stay is unknown and
+//     the gate is closed (§8)
 //   - `availability.available` is true
 //   - `price.exact` is true
 //   - a direct booking URL is present — and per §5.1 it MUST be a node URL
@@ -23,6 +32,9 @@
 //     closed top-level domain. No domain, or no usable lists, is unknown
 //     (§2, §9) and fails the gate.
 //
+// Every value above is read from the SIGNED payload. Nothing is ever taken
+// from an unsigned part of the envelope.
+//
 // What remains the CALLER'S RESPONSIBILITY needs network context this package
 // deliberately does not have: fetching (over HTTPS, following only redirects
 // to node URLs, §2) and the discovery document itself (its `canonical_domain`
@@ -31,6 +43,7 @@
 
 import { Status } from "./status.js";
 import { checkHostOwned, fetchedHost, isHostOwnedLists } from "./host-domain.js";
+import { OfferRule, lifetimeReasons, requestReasons, toClock } from "./offer-rules.js";
 
 /** Named codes for failed quote-gate conditions. */
 export const QuoteFailure = Object.freeze({
@@ -55,6 +68,9 @@ export const QuoteFailure = Object.freeze({
   PUBLIC_SUFFIX: "public_suffix",
   NOT_HOST_OWNED: "not_host_owned",
   CLOSED_TLD: "closed_tld",
+  // §5, §6, §7 (0.3.0): the offer rules beyond the signature. Same codes as
+  // the vrp-spec offer-rules conformance vectors.
+  ...OfferRule,
 });
 
 // §2 host-owned domain and §7 offer binding. Returns QuoteFailure codes.
@@ -112,18 +128,34 @@ function bookingUrlFailure(payload) {
   return null;
 }
 
+// §5, §6, §7: the offer rules beyond the signature, judged at the quoting
+// instant (`context.now`, else the instant verifyOffer judged at, else now)
+// against the stay the caller asked for (`context.request`). The lifetime is
+// judged again here so that an offer verified earlier and quoted later is
+// still fresh when quoted.
+function offerRuleFailures(verification, context) {
+  const clock = toClock(context?.now ?? verification.evaluatedAt ?? undefined);
+  if (!Number.isFinite(clock)) return [QuoteFailure.NOT_VERIFIED];
+  const payload = verification.payload;
+  return [...lifetimeReasons(payload, clock), ...requestReasons(payload, clock, context?.request)];
+}
+
 /**
- * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5.1, §2)
- * against a `verifyOffer()` result.
+ * Evaluate the offline-checkable Safe-to-Quote conditions (§7, §5, §5.1, §6,
+ * §2) against a `verifyOffer()` result.
  *
  * @param {import("./offer.js").OfferVerificationResult} verification
- * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] } }} [context]
+ * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] }, request?: { check_in: string, check_out: string, guests: number }, now?: Date|string|number }} [context]
  *        `domain`: the domain being verified — the host of the URL the offer
  *        (and its discovery document) was requested from, before any
  *        redirect. `hostOwnedLists`: the ICANN section of the Public Suffix
  *        List and the Specification 13 top-level domains (see
- *        icannRulesFromPsl, specification13FromGtlds). Without either, the
- *        gate fails closed.
+ *        icannRulesFromPsl, specification13FromGtlds). `request`: the stay
+ *        the caller asked the offer endpoint for (§4): `check_in` and
+ *        `check_out` as `YYYY-MM-DD`, `guests` an integer. `now`: the
+ *        quoting instant (default: the instant `verification` was judged
+ *        at). Without the domain, the lists or the request, the gate fails
+ *        closed (`domain_unknown`, `host_owned_unknown`, `asked_stay_unknown`).
  * @returns {{ ok: boolean, failures: string[] }}  `ok` is true only when every
  *          condition passes; `failures` lists QuoteFailure codes otherwise.
  */
@@ -131,7 +163,7 @@ export function quoteChecks(verification, context) {
   const failures = [];
 
   if (!verification || verification.status !== Status.VERIFIED) {
-    // Covers signature, key resolution, payload/offer match, and freshness.
+    // Covers signature, key resolution, payload/offer match, lifetime and freshness.
     return { ok: false, failures: [QuoteFailure.NOT_VERIFIED] };
   }
 
@@ -148,20 +180,22 @@ export function quoteChecks(verification, context) {
     failures.push(QuoteFailure.QUOTE_PERMISSION_NOT_GRANTED);
   }
   failures.push(...hostDomainFailures(payload, context));
+  failures.push(...offerRuleFailures(verification, context));
 
   return { ok: failures.length === 0, failures };
 }
 
 /**
  * True only when every offline-checkable Safe-to-Quote condition passes,
- * including the host-owned domain (§2) and the offer's binding to the domain
- * it was fetched from (§7). Without `context.domain` and
- * `context.hostOwnedLists` it is false. Fetching and the discovery document
- * remain the caller's responsibility. Everything short of a full pass is
- * false — fail closed.
+ * including the host-owned domain (§2), the offer's binding to the domain it
+ * was fetched from (§7), the lifetime (§5, §6), the dates (§5) and the stay
+ * asked for (§7). Without `context.domain`, `context.hostOwnedLists` and
+ * `context.request` it is false. Fetching and the discovery document remain
+ * the caller's responsibility. Everything short of a full pass is false — fail
+ * closed.
  *
  * @param {import("./offer.js").OfferVerificationResult} verification
- * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] } }} [context]
+ * @param {{ domain?: string, hostOwnedLists?: { icannRules: string[], specification13Tlds: string[] }, request?: { check_in: string, check_out: string, guests: number }, now?: Date|string|number }} [context]
  */
 export function safeToQuote(verification, context) {
   return quoteChecks(verification, context).ok;

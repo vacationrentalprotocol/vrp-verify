@@ -9,6 +9,13 @@ export { verifyCompactJws } from "./src/jws.js";
 export { verifyOffer } from "./src/offer.js";
 export { safeToQuote, quoteChecks, QuoteFailure } from "./src/quote.js";
 export {
+  checkOfferRules,
+  OfferRule,
+  MAX_LIFETIME_SECONDS,
+  CLOCK_SKEW_SECONDS,
+  LANGUAGE_TAG,
+} from "./src/offer-rules.js";
+export {
   checkHostOwned,
   registrableDomain,
   icannRulesFromPsl,
