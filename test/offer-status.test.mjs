@@ -13,13 +13,16 @@ const testDir = dirname(fileURLToPath(import.meta.url));
 const vectorsDir = join(testDir, "vectors");
 const load = (f) => JSON.parse(readFileSync(join(vectorsDir, f), "utf8"));
 const hostDomain = JSON.parse(readFileSync(join(testDir, "host-domain", "vectors.v0.1.json"), "utf8"));
-// The vectors' offers name example-host.invalid (spec §2, §7 context, 0.2.0).
+// The vectors' offers name example-host.invalid (spec §2, §7 context, 0.2.0)
+// and are for the stay 2026-09-12 to 2026-09-15, two guests (§7, 0.3.0).
 const CONTEXT = {
   domain: "example-host.invalid",
   hostOwnedLists: {
     icannRules: hostDomain.psl_icann_rules,
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
+  request: { check_in: "2026-09-12", check_out: "2026-09-15", guests: 2 },
+  now: "2026-06-02T12:05:00Z", // the fresh vector's clock; the gate judges at the quoting instant
 };
 
 // Expected offer-level status per vector (derived from each vector's expected
@@ -40,6 +43,8 @@ for (const [file, expected] of Object.entries(EXPECT)) {
     assert.equal(r.status, expected, `${r.status} (${r.code}): ${r.reason}`);
     assert.equal(safeToQuote(r, CONTEXT), expected === Status.VERIFIED);
     assert.equal(safeToQuote(r), false, "without the domain and the lists the gate is closed");
+    const { request, ...withoutRequest } = CONTEXT;
+    assert.equal(safeToQuote(r, withoutRequest), false, "without the stay asked for the gate is closed (0.3.0)");
   });
 }
 

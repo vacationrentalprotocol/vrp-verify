@@ -17,13 +17,18 @@ const base = JSON.parse(readFileSync(join(vectorsDir, "01-valid-fresh.json"), "u
 const hostDomain = JSON.parse(readFileSync(join(testDir, "host-domain", "vectors.v0.1.json"), "utf8"));
 
 // 0.2.0: the gate needs the domain the offer was fetched from and both lists
-// (spec §2, §7). The vectors' offers name example-host.invalid.
+// (spec §2, §7). The vectors' offers name example-host.invalid. 0.3.0: it
+// also needs the stay asked for (§7); the base vector's signed request is it.
 const CONTEXT = {
   domain: "example-host.invalid",
   hostOwnedLists: {
     icannRules: hostDomain.psl_icann_rules,
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
+  request: { ...base.input.offer.request },
+  // The quoting instant defaults to the current time; the vector's clock
+  // keeps these cases deterministic.
+  now: base.clock,
 };
 
 // Every case is evaluated at the base vector's own clock (offer is fresh).

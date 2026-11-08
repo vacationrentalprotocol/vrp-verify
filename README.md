@@ -7,17 +7,21 @@ It answers one question for an AI agent or client: **may I quote this offer as a
 official, direct offer from the host?** It verifies an Ed25519 (EdDSA) signature
 over the offer against the **host domain's own JWKS** — the host is the root of
 trust — and then evaluates the offline-checkable Safe-to-Quote conditions of the
-VRP specification (§7 and §5.1), including that the offer comes from a
-**host-owned domain** (§2): the host's own registrable domain, never a name
-under a platform's, marketplace's or site builder's domain. There is no central
-registry, and this package never contacts one.
+VRP specification (§7, with §5, §5.1 and §6): the offer's **lifetime** (a
+positive window of at most 900 seconds, not started in the future, not yet
+passed), the **dates** of the stay, that the signed stay is **the stay you
+asked for**, and that the offer comes from a **host-owned domain** (§2): the
+host's own registrable domain, never a name under a platform's, marketplace's
+or site builder's domain. Every value is read from the signed payload; nothing
+is taken from an unsigned part of the envelope. There is no central registry,
+and this package never contacts one.
 
 - **Zero runtime dependencies.** Node standard library (`node:crypto`) only.
 - **No network, no canonicalization.** You supply the JWKS, the domain you
-  fetched the offer from, and two public lists (the Public Suffix List and
-  ICANN's gTLD list); the signature is checked over the exact bytes as sent. The evaluation instant is injectable
-  (`now`) and defaults to the system clock; the crypto layer itself never
-  consults a clock.
+  fetched the offer from, the stay you asked for, and two public lists (the
+  Public Suffix List and ICANN's gTLD list); the signature is checked over the
+  exact bytes as sent. The evaluation instant is injectable (`now`) and
+  defaults to the system clock; the crypto layer itself never consults a clock.
 - **Fail-closed.** Only a full pass is quoteable.
 - **Conformance-tested** against the public VRP offer vectors.
 
@@ -52,23 +56,56 @@ const hostOwnedLists = {
 // e.g. https://<domain>/.well-known/vacation-rental.json, before any redirect.
 // `envelope` is a signed_verified_stay_offer (VRP spec §5).
 // `jwks` is the JSON at https://<domain>/.well-known/jwks.json
+// `request` is the stay you asked the offer endpoint for (§4): the same
+// check_in, check_out and guests you sent, as you sent them.
+const request = { check_in: "2027-03-08", check_out: "2027-03-12", guests: 2 };
 const result = verifyOffer({ envelope, jwks, now: new Date() });
-const { ok, failures } = quoteChecks(result, { domain, hostOwnedLists });
+const { ok, failures } = quoteChecks(result, { domain, hostOwnedLists, request });
 
 if (ok) {
-  // Signature valid, offer fresh, availability true, price exact, booking URL
-  // pinned to the host domain, agent permission granted, and the offer names
-  // the host-owned domain it was fetched from.
-  // Quote result.payload as an official direct offer.
+  // Signature valid; generated_at and valid_until well-formed, a lifetime of
+  // at most 900 seconds, not started in the future, still fresh; the signed
+  // stay is the stay you asked for, on dates that exist and have not passed;
+  // availability true, price exact, booking URL pinned to the host domain,
+  // agent permission granted, and the offer names the host-owned domain it
+  // was fetched from. Quote result.payload as an official direct offer.
 } else {
-  console.warn(result.status, failures); // do NOT quote
+  console.warn(result.status, result.code, failures); // do NOT quote
 }
 ```
 
-`safeToQuote(result, { domain, hostOwnedLists })` returns the same verdict as a
-boolean. **Without `domain` and `hostOwnedLists` the gate is closed**
-(`domain_unknown`, `host_owned_unknown`): an offer whose domain is not checked
-is unknown (§2, §9), never safe to quote.
+`safeToQuote(result, { domain, hostOwnedLists, request })` returns the same
+verdict as a boolean. **Without `domain`, `hostOwnedLists` and `request` the
+gate is closed** (`domain_unknown`, `host_owned_unknown`, `asked_stay_unknown`):
+an offer whose domain is not checked, or whose stay cannot be compared with the
+stay asked for, is unknown (§2, §7, §9), never safe to quote.
+
+### Changed in 0.3.0
+
+Up to 0.2.0, `verifyOffer()` read `valid_until` only, with a lenient date
+parser, and `quoteChecks()` compared nothing about the stay. An offer with a
+`valid_until` ten years out, or without `generated_at`, or signed for other
+dates or another guest count than the ones you asked for, could pass as
+`verified` and as safe to quote. From 0.3.0, `verifyOffer()` enforces spec §5
+and §6 on the signed payload — `generated_at` and `valid_until` are UTC
+date-times ending in `Z` that exist, `valid_until` is later than `generated_at`
+and at most 900 seconds after it, `generated_at` is at most 60 seconds ahead of
+`now`, and `valid_until` has not passed — and `quoteChecks()` enforces §5 and
+§7 on `request`: the dates exist, `check_out` is later than `check_in`,
+`check_in` is not earlier than the day before the UTC date, `language` (when
+present) is a language tag, and `check_in`, `check_out` and `guests` equal the
+stay you pass as `context.request`. `quoteChecks()` judges the lifetime again
+at the quoting instant — `context.now` when you pass one, else the current
+time — so an offer verified fresh and quoted after its `valid_until` fails with
+`expired`. A `now` that cannot be read (`NaN`, an Invalid Date, an unparseable
+string) fails with `clock_unusable` in `verifyOffer()`, `quoteChecks()` and
+`checkOfferRules()`.
+
+**Migration.** A caller that upgrades without passing `context.request` gets
+`false` from `safeToQuote()` for every offer, valid ones included
+(`asked_stay_unknown`): the gate no longer has a way to know whether the signed
+stay is the one asked for. Pass `{ domain, hostOwnedLists, request }`; the
+reason codes are those of the VRP offer-rules conformance vectors.
 
 ### Changed in 0.2.0
 
@@ -81,10 +118,10 @@ lists. Update your calls to pass `{ domain, hostOwnedLists }`.
 
 ## What this package checks — and what it does not
 
-VRP spec **§7 (Safe-to-Quote Rules)** lists eleven conditions. This package
-checks the **eight that are decidable offline** from the signed offer and the
-JWKS you pass in, and the **host-owned domain** (§2) from the domain and the
-lists you pass in:
+VRP spec **§7 (Safe-to-Quote Rules)** lists sixteen conditions. This package
+checks the **thirteen that are decidable offline** from the signed offer, the
+JWKS, the domain, the stay you asked for and the clock you pass in, and the
+**host-owned domain** (§2) from the domain and the lists you pass in:
 
 | # | §7 condition | where |
 | - | ------------ | ----- |
@@ -92,6 +129,9 @@ lists you pass in:
 | 2 | the compact JWS verifies against the host-domain JWKS | `verifyOffer` |
 | 3 | the signed payload matches the returned offer | `verifyOffer` |
 | 4 | `valid_until` is present and fresh | `verifyOffer` |
+| 4a | `generated_at` and `valid_until` meet **§5** and **§6**: UTC date-times ending in `Z` that exist, `valid_until` later than `generated_at` and at most 900 seconds after it, `generated_at` at most 60 seconds ahead of `now` | `verifyOffer`, re-checked by `quoteChecks` at the quoting instant |
+| 4b | `request.check_in` and `request.check_out` exist, `check_out` is later than `check_in`, `check_in` is not earlier than the day before the UTC date (**§5**, §7); `request.language`, when present, has the form §5 gives | `quoteChecks` |
+| 4c | `request.check_in`, `request.check_out` and `request.guests` are the stay you asked for (§7) | `quoteChecks`, from `request` |
 | 5 | `availability.available` is true | `quoteChecks` |
 | 6 | `price.exact` is true | `quoteChecks` |
 | 7 | a direct booking URL is present — and, per **§5.1**, is a node URL (§2): `https`, host the offer's `canonical_domain` or `www.` followed by it, no userinfo, the default port | `quoteChecks` |
@@ -125,20 +165,27 @@ against whatever JWKS document you hand it.
 | `header`              | the JWS protected header, when it could be parsed             |
 | `payload`             | the signed offer payload, when available                      |
 | `payloadMatchesOffer` | whether `envelope.offer` equals the signed payload; `null` when there is no plaintext offer to compare |
+| `evaluatedAt`         | the instant the lifetime was judged at (ISO date-time); `null` when the verdict was reached before the clock mattered |
+| `reasons`             | every lifetime rule (§5, §6) the signed payload breaks at that instant, in the order of the VRP offer-rules vectors; `[]` when none |
 
 The four statuses:
 
-- **verified** — signature valid **and** the offer is still fresh.
-- **expired** — signature valid, but `valid_until` has passed.
+- **verified** — signature valid, the lifetime meets §5 and §6, **and** the
+  offer is still fresh.
+- **expired** — signature valid and lifetime well-formed, but `valid_until`
+  has passed.
 - **invalid** — the presented **artifact** fails verification: a signature is
-  present and does not verify, or the envelope is tampered/malformed. This is
-  a statement about the envelope — per spec §9 a failed signature check leaves
-  every value inside *Unknown*, so nothing in it may be cited as true **or**
-  false.
+  present and does not verify, the envelope is tampered/malformed, or the
+  signed lifetime breaks a rule a node MUST keep (`lifetime_not_positive`,
+  `lifetime_too_long`, `generated_at_in_future`). This is a statement about
+  the envelope — per spec §9 a failed check leaves every value inside
+  *Unknown*, so nothing in it may be cited as true **or** false.
 - **unverifiable** — a verdict could not be reached: the signing key is absent
-  from the JWKS or unusable, or `valid_until` is missing/malformed so
-  freshness cannot be determined (`valid_until_unusable`). This is **never**
-  reported as `invalid`, because absence of a key is not proof of forgery.
+  from the JWKS or unusable, or `generated_at` / `valid_until` is missing or
+  not a UTC date-time ending in `Z` so the lifetime cannot be determined
+  (`generated_at_unusable`, `valid_until_unusable`), or `now` itself is not a
+  usable date (`clock_unusable`). This is **never** reported as `invalid`,
+  because absence of a key is not proof of forgery.
 
 `status: "verified"` alone is **not** permission to quote — it is the crypto
 verdict. `safeToQuote()` / `quoteChecks()` layer the §7/§5.1 policy conditions on
@@ -147,9 +194,14 @@ top; `quoteChecks()` names each failed condition
 `booking_url_invalid`, `booking_url_host_mismatch`,
 `quote_permission_not_granted`, `domain_unknown`, `host_owned_unknown`,
 `offer_domain_mismatch`, `malformed_domain`, `public_suffix`, `not_host_owned`,
-`closed_tld`, or `not_verified`). The host-domain codes are the ones the VRP
-host-domain conformance vectors use, and `checkHostOwned(domain, lists)` is
-exported for checking a domain on its own.
+`closed_tld`, `request_missing`, `invalid_check_in`, `invalid_check_out`,
+`check_out_not_after_check_in`, `check_in_in_past`, `invalid_language`,
+`asked_stay_unknown`, `request_mismatch`, a lifetime code such as `expired`
+when quoting later than verifying, `clock_unusable`, or `not_verified`). The host-domain codes are the ones the VRP
+host-domain conformance vectors use, the offer-rules codes are the ones the VRP
+offer-rules conformance vectors use, and `checkHostOwned(domain, lists)` and
+`checkOfferRules(payload, { now, asked })` are exported for checking a domain,
+or a payload's lifetime and stay, on their own.
 
 ### Low-level
 
@@ -173,6 +225,17 @@ policy). Its `reason` codes match the published VRP conformance vectors.
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext
   `envelope.offer` is treated as tampering (`invalid`).
+- **Only the signed payload speaks.** `valid_until`, `generated_at`,
+  `availability`, `price`, `booking`, `agent_permission` and `request` are read
+  from the verified payload and nowhere else; a member missing there is
+  missing, whatever an unsigned part of the envelope says.
+- **The lifetime is bounded** (§5, §6): a window longer than 900 seconds, one
+  that starts more than 60 seconds in the future, one that runs backwards, or
+  one whose instants are not UTC date-times ending in `Z` is never `verified`,
+  however valid the signature.
+- **The stay is the stay you asked for** (§7): a genuine, fresh, correctly
+  signed offer for other dates or another guest count fails the gate, and so
+  does a gate call that does not say what was asked for.
 - The **booking URL is a node URL** (§5.1, §2): a signed offer whose
   `direct_booking_url` is not on the offer's `canonical_domain` or `www.`
   followed by it fails the gate, even though its signature is valid. Any other
@@ -196,9 +259,12 @@ vector's declared `expected` block on the three fields the vectors define
 (`verified` / `reason` / `fresh`) — the same three-field contract the vrp-spec
 reference runner checks. It also runs the gate against a byte-identical copy of
 the VRP host-domain vectors (`host_owned`, `real_world`, the offer-binding cases
-for the signed offer, and the booking-URL node URLs). The typed statuses and
-the quote gate are additional API surface on top of that contract, covered by
-their own tests.
+for the signed offer, and the booking-URL node URLs), and `checkOfferRules`,
+`verifyOffer` and `quoteChecks` against a byte-identical copy of the VRP
+offer-rules vectors (the lifetime, the clock, the dates, the language tag and
+the stay asked for), each re-signed with the conformance test key so the rules,
+not the signature, decide. The typed statuses and the quote gate are additional
+API surface on top of that contract, covered by their own tests.
 
 ## Implement your own
 
