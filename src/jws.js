@@ -57,6 +57,14 @@ export function verifyCompactJws(compactJws, jwksDoc) {
   if (jwk.crv !== "Ed25519" || jwk.kty !== "OKP") {
     return { valid: false, reason: Reason.UNSUPPORTED_KEY, header };
   }
+  // Core §3 and the JWKS schema: a VRP signing key names its `alg`, and the
+  // name is `EdDSA`. A key that is OKP/Ed25519 but labelled with another
+  // algorithm, or with none, is not a key VRP signs with: it is refused here
+  // rather than used because its curve happens to fit. The name is compared as
+  // written (RFC 7515 §4.1.1: case-sensitive).
+  if (jwk.alg !== "EdDSA") {
+    return { valid: false, reason: Reason.UNSUPPORTED_KEY, header };
+  }
 
   let key;
   try {

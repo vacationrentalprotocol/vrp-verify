@@ -80,6 +80,22 @@ gate is closed** (`domain_unknown`, `host_owned_unknown`, `asked_stay_unknown`):
 an offer whose domain is not checked, or whose stay cannot be compared with the
 stay asked for, is unknown (§2, §7, §9), never safe to quote.
 
+### Changed in 0.3.1
+
+Up to 0.3.0, `verifyCompactJws()` and `verifyOffer()` used whichever key in the
+JWKS carried the JWS header's `kid`, provided it was `kty: "OKP"` and
+`crv: "Ed25519"`, and did not read the key's own `alg`. A key labelled with
+another algorithm (`ES256`, `none`, `ed25519` in lower case) or with no `alg`
+at all verified an offer, and the offer could pass the gate. VRP spec §3 and
+the JWKS schema say a signing key names its `alg`, `EdDSA`. From 0.3.1 a key
+whose `alg` is not exactly `EdDSA` is not a VRP signing key: the result is
+`unverifiable` with the code `unsupported_key`, and the signature is never
+checked against it.
+
+**Migration.** Nothing changes for a JWKS that follows the schema. A JWKS whose
+key omits `alg`, or spells it otherwise, no longer verifies; the node has to
+publish the key with `alg: "EdDSA"`.
+
 ### Changed in 0.3.0
 
 Up to 0.2.0, `verifyOffer()` read `valid_until` only, with a lenient date
@@ -221,6 +237,9 @@ policy). Its `reason` codes match the published VRP conformance vectors.
   transport, caching, and rotation policy stay under your control.
 - The algorithm is **pinned to EdDSA.** A JWS declaring any other `alg` is
   rejected as a downgrade attempt.
+- The **key names the algorithm too** (§3): a key in the JWKS whose own `alg`
+  is not exactly `EdDSA`, or that has none, is not a VRP signing key and is
+  never used, even when its `kid` matches and its curve fits.
 - The signature is verified over the **exact received bytes** — no
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext

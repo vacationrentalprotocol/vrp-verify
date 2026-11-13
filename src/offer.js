@@ -58,7 +58,7 @@ const HUMAN = {
   [Reason.MALFORMED_HEADER]: "the JWS protected header is not valid JSON",
   [Reason.UNEXPECTED_ALG]: "the JWS declares an algorithm other than EdDSA (downgrade)",
   [Reason.KID_NOT_IN_JWKS]: "the header kid is not present in the JWKS document",
-  [Reason.UNSUPPORTED_KEY]: "the resolved key is not an Ed25519 OKP key",
+  [Reason.UNSUPPORTED_KEY]: "the resolved key is not an Ed25519 OKP key that names its alg EdDSA",
   [Reason.SIGNATURE_MISMATCH]: "the signature does not verify against the resolved key",
   [Reason.MALFORMED_PAYLOAD]: "the signed payload is not valid JSON",
   [Reason.NO_JWS]: "no compact JWS was found on the envelope",
