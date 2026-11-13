@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyOffer, safeToQuote, Status } from "../index.js";
+import { DISCOVERY } from "./helpers.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectorsDir = join(testDir, "vectors");
@@ -21,6 +22,7 @@ const CONTEXT = {
     icannRules: hostDomain.psl_icann_rules,
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
+  discovery: DISCOVERY, // what the node's discovery document declares (§2, §7, 1.0 candidate)
   request: { check_in: "2026-09-12", check_out: "2026-09-15", guests: 2 },
   now: "2026-06-02T12:05:00Z", // the fresh vector's clock; the gate judges at the quoting instant
 };
@@ -34,6 +36,18 @@ const EXPECT = {
   "03-tampered-signature.json": Status.INVALID,
   "04-unknown-kid.json": Status.UNVERIFIABLE,
   "05-wrong-key.json": Status.INVALID,
+  // 1.0 candidate (spec §3, §5, §9): both names of the signing operation and
+  // both names of the wire format are accepted; any other is never quoted.
+  "06-alg-ed25519-valid-fresh.json": Status.VERIFIED,
+  "07-alg-unexpected.json": Status.INVALID,
+  "08-protocol-version-1-0-valid-fresh.json": Status.VERIFIED,
+  "09-protocol-version-unknown.json": Status.UNVERIFIABLE,
+  "10-alg-ed25519-protocol-version-0-1-valid-fresh.json": Status.VERIFIED,
+  "11-alg-ed25519-jwk-alg-ed25519-valid-fresh.json": Status.VERIFIED,
+  "12-alg-eddsa-jwk-alg-ed25519-valid-fresh.json": Status.VERIFIED,
+  "13-alg-none.json": Status.INVALID,
+  "14-alg-wrong-case.json": Status.INVALID,
+  "15-protocol-version-missing.json": Status.UNVERIFIABLE,
 };
 
 for (const [file, expected] of Object.entries(EXPECT)) {
@@ -45,6 +59,8 @@ for (const [file, expected] of Object.entries(EXPECT)) {
     assert.equal(safeToQuote(r), false, "without the domain and the lists the gate is closed");
     const { request, ...withoutRequest } = CONTEXT;
     assert.equal(safeToQuote(r, withoutRequest), false, "without the stay asked for the gate is closed (0.3.0)");
+    const { discovery, ...withoutDiscovery } = CONTEXT;
+    assert.equal(safeToQuote(r, withoutDiscovery), false, "without the discovery document the gate is closed (1.0 candidate)");
   });
 }
 

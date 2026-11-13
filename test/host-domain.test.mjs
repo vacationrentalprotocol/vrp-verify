@@ -24,7 +24,7 @@ import {
   specification13FromGtlds,
   CLOSED_TLDS,
 } from "../index.js";
-import { resignedEnvelope } from "./helpers.mjs";
+import { resignedEnvelope, DISCOVERY } from "./helpers.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const base = JSON.parse(readFileSync(join(testDir, "vectors", "01-valid-fresh.json"), "utf8"));
@@ -35,7 +35,8 @@ const lists = { icannRules: doc.psl_icann_rules, specification13Tlds: doc.icann_
 const REQUEST = { ...base.input.offer.request };
 // The gate judges at the quoting instant (default: the current time); the base
 // vector's clock keeps these cases deterministic.
-const CONTEXT = { domain: "example-host.invalid", hostOwnedLists: lists, request: REQUEST, now: base.clock };
+// 1.0 candidate: the gate also needs the discovery document the caller fetched (§2, §7).
+const CONTEXT = { domain: "example-host.invalid", hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock };
 const verify = (envelope, now = base.clock) => verifyOffer({ envelope, jwks: base.jwks, now });
 
 // An offer re-signed so that it names `domain` everywhere a node names itself.
@@ -49,15 +50,18 @@ const offerFor = (domain) =>
 // ---------------------------------------------------------------------------
 // Fail closed without context (the 0.2.0 change)
 
-test("no context: a valid, fresh, signed offer is not safe to quote (domain_unknown, asked_stay_unknown)", () => {
+test("no context: a valid, fresh, signed offer is not safe to quote (discovery_unknown, domain_unknown, asked_stay_unknown)", () => {
   const r = verify(base.input);
   assert.equal(r.status, Status.VERIFIED);
-  // Only the clock given (the vector's): the domain and the stay asked for are unknown.
-  assert.deepEqual(quoteChecks(r, { now: base.clock }), { ok: false, failures: [QuoteFailure.DOMAIN_UNKNOWN, QuoteFailure.ASKED_STAY_UNKNOWN] });
+  // Only the clock given (the vector's): the discovery document, the domain and the stay asked for are unknown.
+  assert.deepEqual(quoteChecks(r, { now: base.clock }), {
+    ok: false,
+    failures: [QuoteFailure.DISCOVERY_UNKNOWN, QuoteFailure.DOMAIN_UNKNOWN, QuoteFailure.ASKED_STAY_UNKNOWN],
+  });
   // No context at all: judged at the current time, by which the vector's offer has also expired.
   const bare = quoteChecks(r);
   assert.equal(bare.ok, false);
-  for (const f of [QuoteFailure.DOMAIN_UNKNOWN, QuoteFailure.EXPIRED, QuoteFailure.ASKED_STAY_UNKNOWN]) assert.ok(bare.failures.includes(f), f);
+  for (const f of [QuoteFailure.DISCOVERY_UNKNOWN, QuoteFailure.DOMAIN_UNKNOWN, QuoteFailure.EXPIRED, QuoteFailure.ASKED_STAY_UNKNOWN]) assert.ok(bare.failures.includes(f), f);
   assert.equal(safeToQuote(r), false);
 });
 
@@ -71,7 +75,7 @@ test("a domain but no lists: unknown (host_owned_unknown, spec §2, §9)", () =>
     { icannRules: ["com"] },
     { icannRules: ["com"], specification13Tlds: [] },
   ]) {
-    const q = quoteChecks(r, { domain: "example-host.invalid", hostOwnedLists, request: REQUEST, now: base.clock });
+    const q = quoteChecks(r, { domain: "example-host.invalid", hostOwnedLists, discovery: DISCOVERY, request: REQUEST, now: base.clock });
     assert.deepEqual(q, { ok: false, failures: [QuoteFailure.HOST_OWNED_UNKNOWN] }, JSON.stringify(hostOwnedLists));
   }
 });
@@ -88,14 +92,14 @@ test("a domain that is not a bare host name is unknown", () => {
     "example host.invalid",
     42,
   ]) {
-    const q = quoteChecks(r, { domain, hostOwnedLists: lists, request: REQUEST, now: base.clock });
+    const q = quoteChecks(r, { domain, hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock });
     assert.deepEqual(q, { ok: false, failures: [QuoteFailure.DOMAIN_UNKNOWN] }, String(domain));
   }
 });
 
 test("the domain is compared as a URL host (lowercased)", () => {
   const r = verify(base.input);
-  assert.equal(safeToQuote(r, { domain: "EXAMPLE-HOST.invalid", hostOwnedLists: lists, request: REQUEST, now: base.clock }), true);
+  assert.equal(safeToQuote(r, { domain: "EXAMPLE-HOST.invalid", hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock }), true);
 });
 
 test("with the domain and the lists, the valid vector passes", () => {
@@ -106,7 +110,7 @@ test("with the domain and the lists, the valid vector passes", () => {
 // §7 offer binding
 
 test("an offer fetched from another domain is not that domain's offer (offer_domain_mismatch)", () => {
-  const q = quoteChecks(verify(base.input), { domain: "other-host.invalid", hostOwnedLists: lists, request: REQUEST, now: base.clock });
+  const q = quoteChecks(verify(base.input), { domain: "other-host.invalid", hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock });
   assert.equal(q.ok, false);
   assert.deepEqual(q.failures, [QuoteFailure.OFFER_DOMAIN_MISMATCH]);
 });
@@ -118,7 +122,7 @@ for (const v of doc.offer_binding.filter((x) => x.expected.reason !== "discovery
     const payload = JSON.parse(Buffer.from(v.input.signature.jws.split(".")[1], "base64url").toString("utf8"));
     const r = verifyOffer({ envelope: v.input, jwks: v.jwks, now: payload.generated_at });
     assert.equal(r.status === Status.VERIFIED, v.expected.signature_valid);
-    const { failures } = quoteChecks(r, { domain: v.fetched_domain, hostOwnedLists: lists });
+    const { failures } = quoteChecks(r, { domain: v.fetched_domain, hostOwnedLists: lists, discovery: DISCOVERY });
     assert.equal(
       failures.includes(QuoteFailure.OFFER_DOMAIN_MISMATCH),
       v.expected.reason === "offer_domain_mismatch",
@@ -152,7 +156,7 @@ for (const group of ["host_owned", "real_world"]) {
     test(`${group} vector through the gate: ${JSON.stringify(v.canonical_domain)}`, () => {
       const r = offerFor(v.canonical_domain);
       assert.equal(r.status, Status.VERIFIED, "signature must remain valid — the GATE decides");
-      const q = quoteChecks(r, { domain: v.canonical_domain, hostOwnedLists: lists, request: REQUEST, now: base.clock });
+      const q = quoteChecks(r, { domain: v.canonical_domain, hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock });
       if (v.expected.reason === null) {
         assert.deepEqual(q, { ok: true, failures: [] });
       } else {
@@ -175,7 +179,7 @@ for (const [domain, reason] of [
   test(`a node under another party's domain is never safe to quote: ${domain}`, () => {
     const r = offerFor(domain);
     assert.equal(r.status, Status.VERIFIED);
-    const ctx = { domain, hostOwnedLists: lists, request: REQUEST, now: base.clock };
+    const ctx = { domain, hostOwnedLists: lists, discovery: DISCOVERY, request: REQUEST, now: base.clock };
     assert.ok(quoteChecks(r, ctx).failures.includes(reason));
     assert.equal(safeToQuote(r, ctx), false);
     assert.equal(safeToQuote(r), false);

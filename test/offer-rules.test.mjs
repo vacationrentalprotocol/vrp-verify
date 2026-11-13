@@ -28,7 +28,7 @@ import {
   CLOCK_SKEW_SECONDS,
   LANGUAGE_TAG,
 } from "../index.js";
-import { resignedEnvelope, signOffer, KID } from "./helpers.mjs";
+import { resignedEnvelope, signOffer, KID, DISCOVERY } from "./helpers.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const base = JSON.parse(readFileSync(join(testDir, "vectors", "01-valid-fresh.json"), "utf8"));
@@ -39,7 +39,7 @@ const LISTS = { icannRules: hostDomain.psl_icann_rules, specification13Tlds: hos
 const ASKED = { ...base.input.offer.request }; // 2026-09-12 → 2026-09-15, 2 guests
 // The gate judges at the quoting instant (default: the current time); the
 // base vector's clock keeps these cases deterministic unless a case says otherwise.
-const ctx = (request = ASKED, now = base.clock) => ({ domain: "example-host.invalid", hostOwnedLists: LISTS, request, now });
+const ctx = (request = ASKED, now = base.clock) => ({ domain: "example-host.invalid", hostOwnedLists: LISTS, discovery: DISCOVERY, request, now });
 const FUTURE_STAY = { check_in: "2027-03-08", check_out: "2027-03-12", guests: 2 };
 const verify = (envelope, now = base.clock) => verifyOffer({ envelope, jwks: base.jwks, now });
 const T0 = Date.parse(base.clock); // 2026-06-02T12:05:00Z

@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { verifyOffer, safeToQuote, quoteChecks, QuoteFailure, Status } from "../index.js";
-import { resignedEnvelope } from "./helpers.mjs";
+import { resignedEnvelope, DISCOVERY } from "./helpers.mjs";
 
 const testDir = dirname(fileURLToPath(import.meta.url));
 const vectorsDir = join(testDir, "vectors");
@@ -25,6 +25,8 @@ const CONTEXT = {
     icannRules: hostDomain.psl_icann_rules,
     specification13Tlds: hostDomain.icann_specification13_tlds,
   },
+  // 1.0 candidate: and the discovery document the caller fetched (§2, §7).
+  discovery: DISCOVERY,
   request: { ...base.input.offer.request },
   // The quoting instant defaults to the current time; the vector's clock
   // keeps these cases deterministic.

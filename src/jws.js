@@ -7,7 +7,8 @@
 //   - no clock                (freshness is an offer-level concern; see offer.js)
 //   - no third-party crypto   (node:crypto Ed25519 only)
 //
-// The algorithm is pinned to EdDSA: a JWS declaring any other `alg` is rejected
+// The algorithm is pinned to Ed25519 under its two registered names, `Ed25519`
+// and `EdDSA`: a JWS declaring any other `alg` is rejected
 // as a downgrade attempt rather than trusted.
 //
 // Reason codes use the same vocabulary as the reference verifier behind the
@@ -20,6 +21,7 @@
 
 import { createPublicKey, verify } from "node:crypto";
 import { Reason } from "./status.js";
+import { SIGNATURE_ALGS } from "./version.js";
 
 function b64urlToBuf(s) {
   return Buffer.from(String(s), "base64url");
@@ -47,7 +49,10 @@ export function verifyCompactJws(compactJws, jwksDoc) {
   } catch {
     return { valid: false, reason: Reason.MALFORMED_HEADER };
   }
-  if (header.alg !== "EdDSA") {
+  // 1.0 §3, §5 (ADR 0017): `Ed25519` and `EdDSA` name the same operation; the
+  // name is read from this signed header and compared as written. Any other
+  // name is refused before any cryptographic check.
+  if (!SIGNATURE_ALGS.includes(header.alg)) {
     return { valid: false, reason: Reason.UNEXPECTED_ALG, header };
   }
 
@@ -57,12 +62,13 @@ export function verifyCompactJws(compactJws, jwksDoc) {
   if (jwk.crv !== "Ed25519" || jwk.kty !== "OKP") {
     return { valid: false, reason: Reason.UNSUPPORTED_KEY, header };
   }
-  // Core §3 and the JWKS schema: a VRP signing key names its `alg`, and the
-  // name is `EdDSA`. A key that is OKP/Ed25519 but labelled with another
-  // algorithm, or with none, is not a key VRP signs with: it is refused here
-  // rather than used because its curve happens to fit. The name is compared as
-  // written (RFC 7515 §4.1.1: case-sensitive).
-  if (jwk.alg !== "EdDSA") {
+  // §3 and the JWKS schema: a VRP signing key names its `alg`, `Ed25519` or
+  // `EdDSA` (1.0 candidate; v0.1 knows `EdDSA` only). A key that is
+  // OKP/Ed25519 but labelled with another algorithm, or with none, is not a
+  // key VRP signs with: it is refused here rather than used because its curve
+  // happens to fit. The name is compared as written (RFC 7515 §4.1.1:
+  // case-sensitive).
+  if (!SIGNATURE_ALGS.includes(jwk.alg)) {
     return { valid: false, reason: Reason.UNSUPPORTED_KEY, header };
   }
 

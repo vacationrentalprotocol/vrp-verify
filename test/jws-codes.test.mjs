@@ -29,7 +29,7 @@ test("malformed_header: header segment is not valid JSON", () => {
   assert.equal(reasonOf(jws), Reason.MALFORMED_HEADER);
 });
 
-test("unexpected_alg: any alg other than EdDSA is a rejected downgrade", () => {
+test("unexpected_alg: any alg other than Ed25519 or EdDSA is a rejected downgrade", () => {
   for (const alg of ["none", "RS256", "HS256", "ES256"]) {
     const header = b64url(JSON.stringify({ alg, typ: "JWT", kid: KID }));
     const [, p, s] = goodJws.split(".");
@@ -44,12 +44,14 @@ test("unsupported_key: kid resolves to a non-Ed25519 key", () => {
   assert.equal(reasonOf(goodJws, p256Jwks), Reason.UNSUPPORTED_KEY);
 });
 
-test("unsupported_key: an OKP/Ed25519 key labelled with another alg, or none, is not a VRP signing key (Core §3)", () => {
+test("unsupported_key: an OKP/Ed25519 key labelled with another alg, or none, is not a VRP signing key (§3)", () => {
   const [key] = jwks.keys;
   assert.equal(key.alg, "EdDSA");
-  // control: the key as published verifies
+  // control: the key as published verifies, and so does the same key under
+  // the other registered name (1.0 candidate: Ed25519 or EdDSA on the key)
   assert.equal(verifyCompactJws(goodJws, jwks).valid, true);
-  for (const alg of ["ES256", "RS256", "none", "eddsa", "ed25519", "Ed25519", "", null, 1]) {
+  assert.equal(verifyCompactJws(goodJws, { keys: [{ ...key, alg: "Ed25519" }] }).valid, true);
+  for (const alg of ["ES256", "RS256", "none", "eddsa", "ed25519", "EDDSA", "", null, 1]) {
     const relabelled = { keys: [{ ...key, alg }] };
     const r = verifyCompactJws(goodJws, relabelled);
     assert.equal(r.valid, false, `alg ${JSON.stringify(alg)}`);
@@ -67,7 +69,7 @@ test("unsupported_key: an OKP/Ed25519 key labelled with another alg, or none, is
 
 test("the alg is read from the signed JWS header, not from the unsigned envelope beside it", () => {
   const [, p] = goodJws.split(".");
-  for (const alg of ["ES256", "ed25519", "Ed25519"]) {
+  for (const alg of ["ES256", "ed25519", "eddsa"]) {
     // a genuine Ed25519 signature over a header that names another algorithm
     const jws = signRawSegments(b64url(JSON.stringify({ alg, typ: "JWT", kid: KID })), p);
     // the unsigned envelope still says EdDSA

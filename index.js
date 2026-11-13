@@ -26,3 +26,12 @@ export {
   GTLDS_URL,
 } from "./src/host-domain.js";
 export { Status, Reason } from "./src/status.js";
+export {
+  checkDiscoveryVersion,
+  checkOfferVersion,
+  checkDeclaredVersion,
+  VersionReason,
+  KNOWN_PROTOCOL_VERSIONS,
+  SIGNATURE_ALGS,
+  VRP_PROTOCOL,
+} from "./src/version.js";
