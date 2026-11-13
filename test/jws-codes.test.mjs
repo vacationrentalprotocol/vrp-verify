@@ -44,6 +44,40 @@ test("unsupported_key: kid resolves to a non-Ed25519 key", () => {
   assert.equal(reasonOf(goodJws, p256Jwks), Reason.UNSUPPORTED_KEY);
 });
 
+test("unsupported_key: an OKP/Ed25519 key labelled with another alg, or none, is not a VRP signing key (Core §3)", () => {
+  const [key] = jwks.keys;
+  assert.equal(key.alg, "EdDSA");
+  // control: the key as published verifies
+  assert.equal(verifyCompactJws(goodJws, jwks).valid, true);
+  for (const alg of ["ES256", "RS256", "none", "eddsa", "ed25519", "Ed25519", "", null, 1]) {
+    const relabelled = { keys: [{ ...key, alg }] };
+    const r = verifyCompactJws(goodJws, relabelled);
+    assert.equal(r.valid, false, `alg ${JSON.stringify(alg)}`);
+    assert.equal(r.reason, Reason.UNSUPPORTED_KEY, `alg ${JSON.stringify(alg)}`);
+  }
+  const { alg: _alg, ...unlabelled } = key;
+  const r = verifyCompactJws(goodJws, { keys: [unlabelled] });
+  assert.equal(r.valid, false, "no alg member");
+  assert.equal(r.reason, Reason.UNSUPPORTED_KEY, "no alg member");
+  // offer level: the key cannot be used, so the offer is unverifiable, never quoted
+  const offer = verifyOffer({ envelope: base.input, jwks: { keys: [{ ...key, alg: "ES256" }] }, now: base.clock });
+  assert.equal(offer.status, Status.UNVERIFIABLE);
+  assert.equal(offer.code, Reason.UNSUPPORTED_KEY);
+});
+
+test("the alg is read from the signed JWS header, not from the unsigned envelope beside it", () => {
+  const [, p] = goodJws.split(".");
+  for (const alg of ["ES256", "ed25519", "Ed25519"]) {
+    // a genuine Ed25519 signature over a header that names another algorithm
+    const jws = signRawSegments(b64url(JSON.stringify({ alg, typ: "JWT", kid: KID })), p);
+    // the unsigned envelope still says EdDSA
+    const envelope = { ...base.input, signature: { ...base.input.signature, alg: "EdDSA", jws } };
+    const r = verifyOffer({ envelope, jwks, now: base.clock });
+    assert.equal(r.status, Status.INVALID, alg);
+    assert.equal(r.code, Reason.UNEXPECTED_ALG, alg);
+  }
+});
+
 test("malformed_payload: valid signature over a non-JSON payload", () => {
   const header = b64url(JSON.stringify({ alg: "EdDSA", typ: "JWT", kid: KID }));
   const jws = signRawSegments(header, b64url("this is not json"));
