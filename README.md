@@ -59,26 +59,65 @@ const hostOwnedLists = {
 // `request` is the stay you asked the offer endpoint for (§4): the same
 // check_in, check_out and guests you sent, as you sent them.
 const request = { check_in: "2027-03-08", check_out: "2027-03-12", guests: 2 };
+// `discovery` is the parsed JSON you fetched from
+// https://<domain>/.well-known/vacation-rental.json (§2).
 const result = verifyOffer({ envelope, jwks, now: new Date() });
-const { ok, failures } = quoteChecks(result, { domain, hostOwnedLists, request });
+const { ok, failures } = quoteChecks(result, { domain, hostOwnedLists, discovery, request });
 
 if (ok) {
   // Signature valid; generated_at and valid_until well-formed, a lifetime of
   // at most 900 seconds, not started in the future, still fresh; the signed
   // stay is the stay you asked for, on dates that exist and have not passed;
   // availability true, price exact, booking URL pinned to the host domain,
-  // agent permission granted, and the offer names the host-owned domain it
-  // was fetched from. Quote result.payload as an official direct offer.
+  // agent permission granted, the offer names the host-owned domain it was
+  // fetched from, and the discovery document and the signed offer each
+  // declare a known protocol version. Quote result.payload as an official
+  // direct offer.
 } else {
   console.warn(result.status, result.code, failures); // do NOT quote
 }
 ```
 
-`safeToQuote(result, { domain, hostOwnedLists, request })` returns the same
-verdict as a boolean. **Without `domain`, `hostOwnedLists` and `request` the
-gate is closed** (`domain_unknown`, `host_owned_unknown`, `asked_stay_unknown`):
-an offer whose domain is not checked, or whose stay cannot be compared with the
-stay asked for, is unknown (§2, §7, §9), never safe to quote.
+`safeToQuote(result, { domain, hostOwnedLists, discovery, request })` returns
+the same verdict as a boolean. **Without `domain`, `hostOwnedLists`,
+`discovery` and `request` the gate is closed** (`domain_unknown`,
+`host_owned_unknown`, `discovery_unknown`, `asked_stay_unknown`): an offer whose
+domain is not checked, whose node's declared protocol version is not read, or
+whose stay cannot be compared with the stay asked for, is unknown (§2, §7, §9),
+never safe to quote.
+
+### Unreleased: VRP 1.0 candidate
+
+Not in any published version. This follows the VRP 1.0 candidate text in
+vrp-spec pull request 187, which is a draft and not adopted; the rules below
+may change with it.
+
+VRP 1.0 keeps the v0.1 wire format and gives it a second name. A discovery
+document and a signed offer each declare `protocol_version`, `"1.0"` or
+`"0.1"`, and the two declarations are checked separately. The value is compared
+as written: `"1.0.0"`, `" 1.0"`, the number `1` and `null` are not `"1.0"`. In
+a JWS protected header, `Ed25519` (RFC 9864) and `EdDSA` (RFC 8037) name the
+same signing operation, and both are accepted; the name is case-sensitive.
+
+- `verifyCompactJws()` accepts the header `alg` `Ed25519` as well as `EdDSA`.
+  Any other name is `unexpected_alg`, as before.
+- `verifyOffer()` reads `protocol_version` from the **signed payload**. Any
+  value other than `"1.0"` or `"0.1"`, or none, gives `unverifiable` with the
+  code `unsupported_version` or `missing_protocol_version`, however genuine the
+  signature. Up to 0.3.0 the signed version was not read. The unsigned
+  envelope's own `protocol_version` is not consulted.
+- `quoteChecks()` reads `protocol` and `protocol_version` from
+  `context.discovery`, the parsed discovery document you fetched. The codes
+  are `malformed_discovery`, `unexpected_protocol`, `missing_protocol_version`
+  and `unsupported_version`. Without `context.discovery` the gate fails with
+  `discovery_unknown`.
+- `checkDiscoveryVersion(discovery)` and `checkOfferVersion(payload)` are
+  exported for checking either declaration on its own.
+
+**Migration.** A caller that upgrades without passing `context.discovery` gets
+`false` from `safeToQuote()` for every offer, valid ones included
+(`discovery_unknown`). A v0.1 node needs no change: `"0.1"` and `EdDSA` are
+accepted as they were.
 
 ### Changed in 0.3.0
 
@@ -119,9 +158,10 @@ lists. Update your calls to pass `{ domain, hostOwnedLists }`.
 ## What this package checks — and what it does not
 
 VRP spec **§7 (Safe-to-Quote Rules)** lists sixteen conditions. This package
-checks the **thirteen that are decidable offline** from the signed offer, the
-JWKS, the domain, the stay you asked for and the clock you pass in, and the
-**host-owned domain** (§2) from the domain and the lists you pass in:
+checks the **fifteen that are decidable offline** from the signed offer, the
+JWKS, the domain, the stay you asked for and the clock you pass in, the
+**host-owned domain** (§2) from the domain and the lists you pass in, and what
+the **discovery document declares** from the document you pass in:
 
 | # | §7 condition | where |
 | - | ------------ | ----- |
@@ -139,14 +179,17 @@ JWKS, the domain, the stay you asked for and the clock you pass in, and the
 | 9 | the signed `canonical_domain` is the domain the offer was fetched from (§7) | `quoteChecks`, from `domain` |
 | 10 | that domain is host-owned (§2): lowercase A-labels, its own registrable domain under the **ICANN section** of the Public Suffix List (the PRIVATE section does not count), not under a brand or closed top-level domain (Specification 13, `booking`, `hotels`); no usable lists = unknown | `quoteChecks`, from `hostOwnedLists` |
 
+| 11 | the discovery document declares `protocol: "vacation-rental-protocol"` and `protocol_version` `"1.0"` or `"0.1"` (§2, §7, 1.0 candidate); no document = unknown | `quoteChecks`, from `discovery` |
+| 12 | beyond the §7 list: the signed offer declares `protocol_version` `"1.0"` or `"0.1"` (§5, §9, 1.0 candidate) | `verifyOffer` |
+
 **What remains the caller's responsibility** needs network context this package
 deliberately does not have:
 
 - fetching over HTTPS and following a redirect only to a node URL of the
   domain (§2),
-- the discovery document itself: its `canonical_domain` is the domain it was
-  fetched from, and it declares `protocol: "vacation-rental-protocol"` and
-  `protocol_version: "0.1"`.
+- fetching the discovery document, and checking that its `canonical_domain`
+  is the domain it was fetched from. What it declares as `protocol` and
+  `protocol_version` the gate reads from the document you pass in.
 
 Likewise, **fetching the JWKS itself** (over HTTPS, from the host's own domain,
 with your own caching and rotation policy) is yours: this package verifies
@@ -219,8 +262,9 @@ policy). Its `reason` codes match the published VRP conformance vectors.
 - The **host domain's JWKS is the trust root.** Fetch it over HTTPS from the
   host's own domain and pass it in. This package does not fetch it for you, so
   transport, caching, and rotation policy stay under your control.
-- The algorithm is **pinned to EdDSA.** A JWS declaring any other `alg` is
-  rejected as a downgrade attempt.
+- The algorithm is **pinned to Ed25519** under its two registered names,
+  `Ed25519` and `EdDSA`. A JWS declaring any other `alg` is rejected as a
+  downgrade attempt.
 - The signature is verified over the **exact received bytes** — no
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext
@@ -263,7 +307,10 @@ for the signed offer, and the booking-URL node URLs), and `checkOfferRules`,
 `verifyOffer` and `quoteChecks` against a byte-identical copy of the VRP
 offer-rules vectors (the lifetime, the clock, the dates, the language tag and
 the stay asked for), each re-signed with the conformance test key so the rules,
-not the signature, decide. The typed statuses and the quote gate are additional
+not the signature, decide. For the VRP 1.0 candidate it runs against
+byte-identical copies of the candidate's offer vectors 06 to 15 and its
+discovery-version vectors (vrp-spec pull request 187): fifteen discovery
+documents and eight pairs of a discovery document and a signed offer. The typed statuses and the quote gate are additional
 API surface on top of that contract, covered by their own tests.
 
 ## Implement your own

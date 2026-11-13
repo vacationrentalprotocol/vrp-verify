@@ -8,6 +8,7 @@
 import { verifyCompactJws } from "./jws.js";
 import { Status, Reason } from "./status.js";
 import { OfferRule, lifetimeReasons, toClock } from "./offer-rules.js";
+import { checkOfferVersion } from "./version.js";
 
 /** Deterministic JSON with sorted keys, for envelope/payload comparison. */
 function stableStringify(value) {
@@ -56,7 +57,9 @@ function verdictForLifetime(reason) {
 const HUMAN = {
   [Reason.MALFORMED_JWS]: "the compact JWS is not a well-formed header.payload.signature",
   [Reason.MALFORMED_HEADER]: "the JWS protected header is not valid JSON",
-  [Reason.UNEXPECTED_ALG]: "the JWS declares an algorithm other than EdDSA (downgrade)",
+  [Reason.UNEXPECTED_ALG]: "the JWS declares an algorithm other than Ed25519 or EdDSA (downgrade)",
+  [Reason.UNSUPPORTED_VERSION]: "the signed offer declares a protocol_version other than \"1.0\" or \"0.1\"",
+  [Reason.MISSING_PROTOCOL_VERSION]: "the signed offer declares no protocol_version",
   [Reason.KID_NOT_IN_JWKS]: "the header kid is not present in the JWKS document",
   [Reason.UNSUPPORTED_KEY]: "the resolved key is not an Ed25519 OKP key",
   [Reason.SIGNATURE_MISMATCH]: "the signature does not verify against the resolved key",
@@ -127,6 +130,16 @@ export function verifyOffer({ envelope, jws, jwks, now = new Date() } = {}) {
         Status.INVALID, Reason.PAYLOAD_OFFER_MISMATCH, null, res.header, payload, false,
       );
     }
+  }
+
+  // Spec §5, §9 (1.0 candidate): the SIGNED payload declares protocol_version
+  // "1.0" or "0.1", compared as written. Any other value, or none, is a
+  // version this verifier does not know: the offer is Unknown and never
+  // quoted, however genuine its signature. The unsigned envelope's own
+  // protocol_version is not consulted.
+  const versionReason = checkOfferVersion(payload);
+  if (versionReason) {
+    return result(Status.UNVERIFIABLE, versionReason, null, res.header, payload, payloadMatchesOffer);
   }
 
   const clock = toClock(now);

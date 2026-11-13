@@ -2,8 +2,8 @@
 //
 // Spec §7 lists sixteen conditions. This module checks every one that is
 // decidable from the signed offer, the caller-supplied JWKS, the domain the
-// offer was fetched from, the two public lists of §2, the stay the caller asked
-// for and the clock:
+// offer was fetched from, the two public lists of §2, the discovery document
+// the caller fetched, the stay the caller asked for and the clock:
 //   - the JWKS contains an Ed25519 key matching the JWS   (via verifyOffer)
 //   - the compact JWS verifies against that JWKS           (via verifyOffer)
 //   - the signed payload matches the returned offer        (via verifyOffer,
@@ -31,19 +31,24 @@
 //     under the ICANN section of the Public Suffix List, not under a brand or
 //     closed top-level domain. No domain, or no usable lists, is unknown
 //     (§2, §9) and fails the gate.
+//   - the discovery document declares `protocol: "vacation-rental-protocol"`
+//     and a `protocol_version` of "1.0" or "0.1" (1.0 candidate) — from
+//     `context.discovery`; without it the declaration is unknown and the gate
+//     is closed (§8)
 //
 // Every value above is read from the SIGNED payload. Nothing is ever taken
 // from an unsigned part of the envelope.
 //
 // What remains the CALLER'S RESPONSIBILITY needs network context this package
 // deliberately does not have: fetching (over HTTPS, following only redirects
-// to node URLs, §2) and the discovery document itself (its `canonical_domain`
-// is the fetched domain, and it declares `protocol` and `protocol_version`).
+// to node URLs, §2), fetching the discovery document, and checking that its
+// `canonical_domain` is the fetched domain.
 // See README "What this package checks".
 
 import { Status } from "./status.js";
 import { checkHostOwned, fetchedHost, isHostOwnedLists } from "./host-domain.js";
 import { OfferRule, lifetimeReasons, requestReasons, toClock } from "./offer-rules.js";
+import { checkDiscoveryVersion } from "./version.js";
 
 /** Named codes for failed quote-gate conditions. */
 export const QuoteFailure = Object.freeze({
@@ -62,6 +67,15 @@ export const QuoteFailure = Object.freeze({
   HOST_OWNED_UNKNOWN: "host_owned_unknown",
   // §7: the signed `canonical_domain` is not the domain it was fetched from.
   OFFER_DOMAIN_MISMATCH: "offer_domain_mismatch",
+  // §2, §7 (1.0 candidate): the caller did not pass the discovery document it
+  // fetched, so its declared protocol and version are unknown.
+  DISCOVERY_UNKNOWN: "discovery_unknown",
+  // §2, §7: what the discovery document declares. Same codes as the vrp-spec
+  // discovery-version vectors.
+  MALFORMED_DISCOVERY: "malformed_discovery",
+  UNEXPECTED_PROTOCOL: "unexpected_protocol",
+  MISSING_PROTOCOL_VERSION: "missing_protocol_version",
+  UNSUPPORTED_VERSION: "unsupported_version",
   // §2: `canonical_domain` is not a host-owned domain. Same codes as the
   // vrp-spec host-domain conformance vectors.
   MALFORMED_DOMAIN: "malformed_domain",
@@ -87,6 +101,16 @@ function hostDomainFailures(payload, context) {
   const reason = checkHostOwned(canonical, context.hostOwnedLists);
   if (reason) failures.push(reason);
   return failures;
+}
+
+// §2, §7: the discovery document declares `protocol` and a known
+// `protocol_version`. The document is the caller's to fetch; without it the
+// gate fails closed. This checks the declaration only: that the document's
+// `canonical_domain` is the fetched domain remains the caller's check.
+function discoveryFailures(context) {
+  if (context?.discovery === undefined) return [QuoteFailure.DISCOVERY_UNKNOWN];
+  const reason = checkDiscoveryVersion(context.discovery);
+  return reason ? [reason] : [];
 }
 
 // Normalize a domain through the URL parser (lowercases, punycodes IDN).
@@ -183,6 +207,7 @@ export function quoteChecks(verification, context) {
   if (payload?.agent_permission?.may_quote_as_official_direct_offer !== true) {
     failures.push(QuoteFailure.QUOTE_PERMISSION_NOT_GRANTED);
   }
+  failures.push(...discoveryFailures(context));
   failures.push(...hostDomainFailures(payload, context));
   failures.push(...offerRuleFailures(verification, context));
 

@@ -52,3 +52,17 @@ export function resignedEnvelope(baseVector, mutate) {
     signature: { format: "jws_compact", alg: "EdDSA", kid: KID, jws },
   };
 }
+
+/**
+ * The discovery document of the vectors' node (spec §2): what a caller fetches
+ * from https://example-host.invalid/.well-known/vacation-rental.json and hands
+ * to the quote gate, which reads its declared protocol and version (§7).
+ */
+export const DISCOVERY = Object.freeze({
+  protocol: "vacation-rental-protocol",
+  protocol_version: "0.1",
+  canonical_domain: "example-host.invalid",
+  node_id: "example-host.invalid",
+  jwks_url: "https://example-host.invalid/.well-known/jwks.json",
+  verified_stay_offer_endpoint: "https://example-host.invalid/api/verified-stay-offer",
+});

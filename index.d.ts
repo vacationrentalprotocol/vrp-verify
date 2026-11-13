@@ -18,7 +18,41 @@ export type ReasonCode =
   | "lifetime_not_positive"
   | "lifetime_too_long"
   | "generated_at_in_future"
-  | "clock_unusable";
+  | "clock_unusable"
+  | "unsupported_version"
+  | "missing_protocol_version";
+
+/** What a declared protocol and version can fail on (VRP 1.0 candidate; spec §2, §5, §7, §9). */
+export type VersionReasonCode =
+  | "malformed_discovery"
+  | "malformed_payload"
+  | "unexpected_protocol"
+  | "missing_protocol_version"
+  | "unsupported_version";
+
+export declare const VersionReason: {
+  readonly MALFORMED_DISCOVERY: "malformed_discovery";
+  readonly MALFORMED_PAYLOAD: "malformed_payload";
+  readonly UNEXPECTED_PROTOCOL: "unexpected_protocol";
+  readonly MISSING_PROTOCOL_VERSION: "missing_protocol_version";
+  readonly UNSUPPORTED_VERSION: "unsupported_version";
+};
+
+/** `protocol` of a VRP discovery document. */
+export declare const VRP_PROTOCOL: "vacation-rental-protocol";
+/** The two names of the one wire format. */
+export declare const KNOWN_PROTOCOL_VERSIONS: readonly ["1.0", "0.1"];
+/** The two names of the one signing operation in a JWS protected header (RFC 9864, RFC 8037). */
+export declare const SIGNATURE_ALGS: readonly ["Ed25519", "EdDSA"];
+
+/** A declared `protocol_version`: null when it is "1.0" or "0.1" as written, else the reason. */
+export declare function checkDeclaredVersion(value: unknown): "missing_protocol_version" | "unsupported_version" | null;
+
+/** Spec §2, §7: null when the discovery document declares the protocol and a known version, else the reason. */
+export declare function checkDiscoveryVersion(discovery: unknown): VersionReasonCode | null;
+
+/** Spec §5, §9: null when the SIGNED payload declares a known version, else the reason. */
+export declare function checkOfferVersion(payload: unknown): VersionReasonCode | null;
 
 /** The offer rules beyond the signature (spec §5, §6, §7), in the vocabulary of the VRP offer-rules conformance vectors. */
 export type OfferRuleCode =
@@ -86,6 +120,8 @@ export declare const Reason: {
   readonly LIFETIME_TOO_LONG: "lifetime_too_long";
   readonly GENERATED_AT_IN_FUTURE: "generated_at_in_future";
   readonly CLOCK_UNUSABLE: "clock_unusable";
+  readonly UNSUPPORTED_VERSION: "unsupported_version";
+  readonly MISSING_PROTOCOL_VERSION: "missing_protocol_version";
 };
 
 export interface Jwk {
@@ -145,6 +181,11 @@ export type QuoteFailureCode =
   | "domain_unknown"
   | "host_owned_unknown"
   | "offer_domain_mismatch"
+  | "discovery_unknown"
+  | "malformed_discovery"
+  | "unexpected_protocol"
+  | "missing_protocol_version"
+  | "unsupported_version"
   | HostDomainReasonCode
   | OfferRuleCode;
 
@@ -159,6 +200,11 @@ export declare const QuoteFailure: {
   readonly DOMAIN_UNKNOWN: "domain_unknown";
   readonly HOST_OWNED_UNKNOWN: "host_owned_unknown";
   readonly OFFER_DOMAIN_MISMATCH: "offer_domain_mismatch";
+  readonly DISCOVERY_UNKNOWN: "discovery_unknown";
+  readonly MALFORMED_DISCOVERY: "malformed_discovery";
+  readonly UNEXPECTED_PROTOCOL: "unexpected_protocol";
+  readonly MISSING_PROTOCOL_VERSION: "missing_protocol_version";
+  readonly UNSUPPORTED_VERSION: "unsupported_version";
   readonly MALFORMED_DOMAIN: "malformed_domain";
   readonly PUBLIC_SUFFIX: "public_suffix";
   readonly NOT_HOST_OWNED: "not_host_owned";
@@ -209,6 +255,13 @@ export interface QuoteContext {
   domain?: string;
   /** Both lists, fetched by the caller from PSL_URL and GTLDS_URL. */
   hostOwnedLists?: HostOwnedLists;
+  /**
+   * The parsed discovery document fetched from the domain's
+   * `/.well-known/vacation-rental.json`. The gate reads its `protocol` and
+   * `protocol_version`; without it the gate fails with `discovery_unknown`
+   * (VRP 1.0 candidate).
+   */
+  discovery?: unknown;
   /** The stay asked for. Without it the gate fails with `asked_stay_unknown` (0.3.0). */
   request?: AskedStay;
   /** The quoting instant; default: the current time. Pass one for a deterministic test. A value that cannot be read fails with `clock_unusable`. */

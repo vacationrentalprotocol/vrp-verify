@@ -70,4 +70,8 @@ export const Reason = Object.freeze({
   LIFETIME_TOO_LONG: "lifetime_too_long",
   GENERATED_AT_IN_FUTURE: "generated_at_in_future",
   CLOCK_UNUSABLE: "clock_unusable",
+  // Offer-level version (1.0 candidate; spec §5, §9): the signed payload
+  // declares "1.0" or "0.1". Same codes as the vrp-spec offer vectors.
+  UNSUPPORTED_VERSION: "unsupported_version",
+  MISSING_PROTOCOL_VERSION: "missing_protocol_version",
 });
