@@ -61,7 +61,7 @@ const HUMAN = {
   [Reason.UNSUPPORTED_VERSION]: "the signed offer declares a protocol_version other than \"1.0\" or \"0.1\"",
   [Reason.MISSING_PROTOCOL_VERSION]: "the signed offer declares no protocol_version",
   [Reason.KID_NOT_IN_JWKS]: "the header kid is not present in the JWKS document",
-  [Reason.UNSUPPORTED_KEY]: "the resolved key is not an Ed25519 OKP key",
+  [Reason.UNSUPPORTED_KEY]: "the resolved key is not an Ed25519 OKP key that names its alg Ed25519 or EdDSA",
   [Reason.SIGNATURE_MISMATCH]: "the signature does not verify against the resolved key",
   [Reason.MALFORMED_PAYLOAD]: "the signed payload is not valid JSON",
   [Reason.NO_JWS]: "no compact JWS was found on the envelope",

@@ -46,13 +46,15 @@ bug-bounty program**.
 **In scope** — this verifier:
 
 - **Ed25519 / EdDSA signature verification** over the compact JWS, including
-  the `alg` pin: a JWS declaring any algorithm other than `EdDSA` must be
+  the `alg` pin: a JWS declaring any algorithm other than `Ed25519` or `EdDSA`
+  (1.0 candidate; released versions accept `EdDSA` only) must be
   rejected, never trusted.
 - **JWS handling** — header and payload decoding, and the rule that a valid
   signature over a payload that differs from the plaintext `envelope.offer` is
   treated as tampering (`invalid`).
 - **JWKS handling** — `kid` lookup and key-shape checks (`kty: "OKP"`,
-  `crv: "Ed25519"`), and the rule that an absent or unusable key yields
+  `crv: "Ed25519"`, `alg: "Ed25519"` or `"EdDSA"` as written), and the rule that an absent or
+  unusable key, or one labelled with another algorithm or with none, yields
   `unverifiable`, never `verified`.
 - **Freshness and lifetime** — evaluation of `generated_at` and `valid_until`
   against the injected `now` (spec §5, §6): a missing or malformed instant

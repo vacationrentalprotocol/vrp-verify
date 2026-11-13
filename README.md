@@ -100,11 +100,13 @@ a JWS protected header, `Ed25519` (RFC 9864) and `EdDSA` (RFC 8037) name the
 same signing operation, and both are accepted; the name is case-sensitive.
 
 - `verifyCompactJws()` accepts the header `alg` `Ed25519` as well as `EdDSA`.
-  Any other name is `unexpected_alg`, as before.
+  Any other name is `unexpected_alg`, as before. The key's own `alg` may be
+  either name too; any other label, or none, is `unsupported_key`, as in
+  0.3.1.
 - `verifyOffer()` reads `protocol_version` from the **signed payload**. Any
   value other than `"1.0"` or `"0.1"`, or none, gives `unverifiable` with the
   code `unsupported_version` or `missing_protocol_version`, however genuine the
-  signature. Up to 0.3.0 the signed version was not read. The unsigned
+  signature. Up to 0.3.1 the signed version is not read. The unsigned
   envelope's own `protocol_version` is not consulted.
 - `quoteChecks()` reads `protocol` and `protocol_version` from
   `context.discovery`, the parsed discovery document you fetched. The codes
@@ -118,6 +120,22 @@ same signing operation, and both are accepted; the name is case-sensitive.
 `false` from `safeToQuote()` for every offer, valid ones included
 (`discovery_unknown`). A v0.1 node needs no change: `"0.1"` and `EdDSA` are
 accepted as they were.
+
+### Changed in 0.3.1
+
+Up to 0.3.0, `verifyCompactJws()` and `verifyOffer()` used whichever key in the
+JWKS carried the JWS header's `kid`, provided it was `kty: "OKP"` and
+`crv: "Ed25519"`, and did not read the key's own `alg`. A key labelled with
+another algorithm (`ES256`, `none`, `ed25519` in lower case) or with no `alg`
+at all verified an offer, and the offer could pass the gate. VRP spec §3 and
+the JWKS schema say a signing key names its `alg`, `EdDSA`. From 0.3.1 a key
+whose `alg` is not exactly `EdDSA` is not a VRP signing key: the result is
+`unverifiable` with the code `unsupported_key`, and the signature is never
+checked against it.
+
+**Migration.** Nothing changes for a JWKS that follows the schema. A JWKS whose
+key omits `alg`, or spells it otherwise, no longer verifies; the node has to
+publish the key with `alg: "EdDSA"`.
 
 ### Changed in 0.3.0
 
@@ -265,6 +283,9 @@ policy). Its `reason` codes match the published VRP conformance vectors.
 - The algorithm is **pinned to Ed25519** under its two registered names,
   `Ed25519` and `EdDSA`. A JWS declaring any other `alg` is rejected as a
   downgrade attempt.
+- The **key names the algorithm too** (§3): a key in the JWKS whose own `alg`
+  is not exactly `Ed25519` or `EdDSA`, or that has none, is not a VRP signing
+  key and is never used, even when its `kid` matches and its curve fits.
 - The signature is verified over the **exact received bytes** — no
   canonicalization step to disagree on.
 - A valid signature over a payload that disagrees with a plaintext
